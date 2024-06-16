@@ -21,10 +21,11 @@ from scipy.stats import norm
 
 
 import pandas as pd
+import qnorm
 import seaborn as sns
 
 
-__FAST_VALID_TEST__ = True
+__FAST_VALID_TEST__ = False
 
 
 DATADIR_ELUT = "data/elut/"
@@ -93,90 +94,99 @@ f.close()
 
 
 # Read elution files into dataframe, thresholding peak specificity at 10 psm
-# Current normalization is performed by dividing each replicate by its maximum intensity row-wise
-#
-# miles: Literature suggests a method called 'variance-stabilized normalization' performs most
-#        optimally
-#
-#   Goal: Render the variance of the dataset approximately independent from its mean
+#   Two normalization methods:
+#     1. Normalization is performed by dividing each replicate by its maximum intensity row-wise
+#     2. Quantile normalization is performed across all samples (currently in-use)
 #   
-#   Our spectral data is a rectangular table (k, i) where:
-#     - k: rows, corresponding to elution traces for proteins
-#     - i: columns, corresponding to the samples/fractions/intensities (i = 1,...,d)
-#     
-#   Method:
-#     Columns (intensities) can be brought on the same scale through affine-linear mappings,
-#     parameterized by the 2d - 2 parameters o2,...,od and s2,...,sd > 0:
-#
-#   TODO: Take notes on paper later, try to understand VSN
 
 elut1_df = pd.read_csv(DATADIR_ELUT + "HEK293_EDTA_minus_SEC_control_20220626.elut", sep='\t')
 elut1_df = elut1_df.set_index('Unnamed: 0')
 elut1_t10_df = elut1_df[elut1_df.sum(axis=1) > 10]
 elut1_t10_rwn_df = elut1_t10_df.div(elut1_t10_df.max(axis=1), axis=0)
+elut1_t10_qtn_df = qnorm.quantile_normalize(elut1_t10_df, axis=0)
 
 elut2_df = pd.read_csv(DATADIR_ELUT + "HEK293_EDTA_plus_SEC_treatment_20220626_trimmed.elut", sep='\t')
 elut2_df = elut2_df.set_index('Unnamed: 0')
 elut2_t10_df = elut2_df[elut2_df.sum(axis=1) > 10]
 elut2_t10_rwn_df = elut2_t10_df.div(elut2_t10_df.max(axis=1), axis=0)
+elut2_t10_qtn_df = qnorm.quantile_normalize(elut2_t10_df, axis=0)
 
 elut3_df = pd.read_csv(DATADIR_ELUT + "Anna_HEK_urea_SEC_0M_050817_20220314b_trimmed.elut", sep='\t')
 elut3_df = elut3_df.set_index('Unnamed: 0')
 elut3_t10_df = elut3_df[elut3_df.sum(axis=1) > 10]
 elut3_t10_rwn_df = elut3_t10_df.div(elut3_t10_df.max(axis=1), axis=0)
+elut3_t10_qtn_df = qnorm.quantile_normalize(elut3_t10_df, axis=0)
 
 elut4_df = pd.read_csv(DATADIR_ELUT + "Anna_HEK_urea_SEC_0p5M_052317_20220315_reviewed_trimmed.elut", sep='\t')
 elut4_df = elut4_df.set_index('Unnamed: 0')
 elut4_t10_df = elut4_df[elut4_df.sum(axis=1) > 10]
 elut4_t10_rwn_df = elut4_t10_df.div(elut4_t10_df.max(axis=1), axis=0)
+elut4_t10_qtn_df = qnorm.quantile_normalize(elut4_t10_df, axis=0)
 
 elut5_df = pd.read_csv(DATADIR_ELUT + "Hs_helaN_1010_ACC.prot_count_mFDRpsm001.elut", sep='\t')
 elut5_df = elut5_df.set_index('Unnamed: 0')
 elut5_t10_df = elut5_df[elut5_df.sum(axis=1) > 10]
 elut5_t10_rwn_df = elut5_t10_df.div(elut5_t10_df.max(axis=1), axis=0)
+elut5_t10_qtn_df = qnorm.quantile_normalize(elut5_t10_df, axis=0)
 
 elut6_df = pd.read_csv(DATADIR_ELUT + "PXD001220.elut", sep='\t')
 elut6_df = elut6_df.set_index('Unnamed: 0')
 elut6_t10_df = elut6_df[elut6_df.sum(axis=1) > 10]
 elut6_t10_rwn_df = elut6_t10_df.div(elut6_t10_df.max(axis=1), axis=0)
+elut6_t10_qtn_df = qnorm.quantile_normalize(elut6_t10_df, axis=0)
 
 elut7_df = pd.read_csv(DATADIR_ELUT + "PXD003754.elut", sep='\t')
 elut7_df = elut7_df.set_index('Unnamed: 0')
 elut7_t10_df = elut7_df[elut7_df.sum(axis=1) > 10]
 elut7_t10_rwn_df = elut7_t10_df.div(elut7_t10_df.max(axis=1), axis=0)
+elut7_t10_qtn_df = qnorm.quantile_normalize(elut7_t10_df, axis=0)
 
 elut8_df = pd.read_csv(DATADIR_ELUT + "PXD009833.elut", sep='\t')
 elut8_df = elut8_df.set_index('Unnamed: 0')
 elut8_t10_df = elut8_df[elut8_df.sum(axis=1) > 10]
 elut8_t10_rwn_df = elut8_t10_df.div(elut8_t10_df.max(axis=1), axis=0)
+elut8_t10_qtn_df = qnorm.quantile_normalize(elut8_t10_df, axis=0)
 
 elut9_df = pd.read_csv(DATADIR_ELUT + "PXD009834.elut", sep='\t')
 elut9_df = elut9_df.set_index('Unnamed: 0')
 elut9_t10_df = elut9_df[elut9_df.sum(axis=1) > 10]
 elut9_t10_rwn_df = elut9_t10_df.div(elut9_t10_df.max(axis=1), axis=0)
+elut9_t10_qtn_df = qnorm.quantile_normalize(elut9_t10_df, axis=0)
 
 elut10_df = pd.read_csv(DATADIR_ELUT + "PXD014820.elut", sep='\t')
 elut10_df = elut10_df.set_index('Unnamed: 0')
 elut10_t10_df = elut10_df[elut10_df.sum(axis=1) > 10]
 elut10_t10_rwn_df = elut10_t10_df.div(elut10_t10_df.max(axis=1), axis=0)
+elut10_t10_qtn_df = qnorm.quantile_normalize(elut10_t10_df, axis=0)
 
 elut11_df = pd.read_csv(DATADIR_ELUT + "PXD015406.elut", sep='\t')
 elut11_df = elut11_df.set_index('Unnamed: 0')
 elut11_t10_df = elut11_df[elut11_df.sum(axis=1) > 10]
 elut11_t10_rwn_df = elut11_t10_df.div(elut11_t10_df.max(axis=1), axis=0)
+elut11_t10_qtn_df = qnorm.quantile_normalize(elut11_t10_df, axis=0)
 
 elut12_df = pd.read_csv(DATADIR_ELUT + "MSV000081520.elut", sep='\t')
 elut12_df = elut12_df.set_index('Unnamed: 0')
 elut12_t10_df = elut12_df[elut12_df.sum(axis=1) > 10]
 elut12_t10_rwn_df = elut12_t10_df.div(elut12_t10_df.max(axis=1), axis=0)
+elut12_t10_qtn_df = qnorm.quantile_normalize(elut12_t10_df, axis=0)
 
-#elut_list = [elut1_t10_rwn_df, elut2_t10_rwn_df, elut3_t10_rwn_df,
-#             elut4_t10_rwn_df, elut5_t10_rwn_df]
+'''
+elut_list = [elut1_t10_rwn_df, elut2_t10_rwn_df, elut3_t10_rwn_df,
+             elut4_t10_rwn_df, elut5_t10_rwn_df]
 elut_list = [elut1_t10_rwn_df, elut2_t10_rwn_df, elut3_t10_rwn_df,
              elut4_t10_rwn_df, elut5_t10_rwn_df, elut4_t10_rwn_df,
              elut5_t10_rwn_df, elut6_t10_rwn_df, elut7_t10_rwn_df,
              elut8_t10_rwn_df, elut9_t10_rwn_df, elut10_t10_rwn_df,
              elut11_t10_rwn_df, elut12_t10_rwn_df]
+'''
+
+elut_list = [elut1_t10_qtn_df, elut2_t10_qtn_df, elut3_t10_qtn_df,
+             elut4_t10_qtn_df, elut5_t10_qtn_df, elut4_t10_qtn_df,
+             elut5_t10_qtn_df, elut6_t10_qtn_df, elut7_t10_qtn_df,
+             elut8_t10_qtn_df, elut9_t10_qtn_df, elut10_t10_qtn_df,
+             elut11_t10_qtn_df, elut12_t10_qtn_df]
+
 print("Elution data obtained. Now preparing ...")
 
 
@@ -370,7 +380,7 @@ class siameseNet(nn.Module):
         self.rnn1 = nn.LSTM(input_size=1, hidden_size=hidden_size, num_layers = 16,
                             bidirectional=True, batch_first=True)
 
-        self.rnn = nn.LSTM(input_size=8, hidden_size=hidden_size, num_layers = 1,
+        self.rnn = nn.LSTM(input_size=8, hidden_size=hidden_size, num_layers = 2,
                            bidirectional=True, batch_first=True)
 
         '''
@@ -640,7 +650,10 @@ for epoch in range(NUM_EPOCHS):
     if avg_test_loss < 0.00001:
         break
 
+# Save the model weights
 torch.save(net.state_dict(), "./siamese_SGD.pt")
+
+# Plot the training and validation loss
 plot_loss(counter, loss_hist, filename="train_loss.png")
 plot_loss(valid_counter, valid_loss_hist, filename="valid_loss.png")
 
@@ -652,8 +665,16 @@ test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
                                                    pos_ppis=test_pos_ppis,
                                                    neg_ppis=[],
                                                    transform=True)
-test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset, num_workers=1, batch_size=1,
-                                 shuffle=True, drop_last=True)
+subset_indices = torch.randperm(len(test_pos_elution_pair_dataset))[:SUBSET_SIZE]
+subset_test_pos_elution_pair_dataset = Subset(test_pos_elution_pair_dataset, subset_indices)
+
+if __FAST_VALID_TEST__:
+    test_pos_dataloader = DataLoader(subset_test_pos_elution_pair_dataset, num_workers=1, batch_size=1,
+                                     shuffle=True, drop_last=True)
+else:
+    test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset, num_workers=1, batch_size=1,
+                                     shuffle=True, drop_last=True)
+
 pos_ppi_euclidean_dist_list = []
 for elut0, elut1, label in test_pos_dataloader:
     output1, output2 = net(elut0.cuda(), elut1.cuda())
@@ -665,8 +686,16 @@ test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
                                                    pos_ppis=[],
                                                    neg_ppis=test_neg_ppis,
                                                    transform=True)
-test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset, num_workers=1, batch_size=1,
-                                 shuffle=True, drop_last=True)
+subset_indices = torch.randperm(len(test_pos_elution_pair_dataset))[:SUBSET_SIZE]
+subset_test_neg_elution_pair_dataset = Subset(test_neg_elution_pair_dataset, subset_indices)
+
+if __FAST_VALID_TEST__:
+    test_neg_dataloader = DataLoader(subset_test_neg_elution_pair_dataset, num_workers=1, batch_size=1,
+                                     shuffle=True, drop_last=True)
+else:
+    test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset, num_workers=1, batch_size=1,
+                                     shuffle=True, drop_last=True)
+
 neg_ppi_euclidean_dist_list = []
 for elut0, elut1, label in test_neg_dataloader:
     output1, output2 = net(elut0.cuda(), elut1.cuda())
@@ -682,16 +711,16 @@ y2 = norm.pdf(x, loc=np.mean(pos_ppi_euclidean_dist_list), scale=np.std(pos_ppi_
 pylab.plot(x,y,label="negative_pairs")
 pylab.plot(x,y2,label="positive_pairs")
 
-#pylab.legend()
-#pylab.show()
+pylab.savefig("pos_neg_pairs.png")
 
-pylab.savefig("blap.png")
+hist1 = sns.histplot(neg_ppi_euclidean_dist_list, alpha=0.5, label='negative_pairs')
+hist2 = sns.histplot(pos_ppi_euclidean_dist_list, alpha=0.5, label='positive_pairs',color='orange')
 
+fig_hist1 = hist1.get_figure()
+fig_hist2 = hist2.get_figure()
 
-
-sns.histplot(neg_ppi_euclidean_dist_list, alpha=0.5, label='negative_pairs')
-sns.histplot(pos_ppi_euclidean_dist_list, alpha=0.5, label='positive_pairs',color='orange')
-
+fig_hist1.savefig("fig_hist1.png")
+fig_hist2.savefig("fig_hist2.png")
 
 # Obtain Pearson correlation between protein pairs
 pos_ppi_pearson_list = []
@@ -710,13 +739,17 @@ y2 = norm.pdf(x, loc=np.mean(pos_ppi_pearson_list), scale=np.std(pos_ppi_pearson
 
 plt.plot(x,y,label="pearson_negative_pairs")
 plt.plot(x,y2,label="pearson_positive_pairs")
-plt.savefig("blap.png")
-#pylab.legend()
-#pylab.show()
+plt.savefig("pos_neg_pairs_PEARSON.png")
 
 # Plot the counts of positive/negative Pearson scores
-sns.histplot(neg_ppi_pearson_list,alpha=0.5,label='negative_pairs')
-sns.histplot(pos_ppi_pearson_list,alpha=0.5,label='positive_pairs',color='orange')
+hist1Pearson = sns.histplot(neg_ppi_pearson_list,alpha=0.5,label='negative_pairs')
+hist2Pearson = sns.histplot(pos_ppi_pearson_list,alpha=0.5,label='positive_pairs',color='orange')
+
+fig_hist1_pearson = hist1Pearson.get_figure()
+fig_hist2_pearson = hist2Pearson.get_figure()
+
+fig_hist1_pearson.savefig("fig_hist1_PEARSON.png")
+fig_hist2_pearson.savefig("fig_hist2_PEARSON.png")
 
 # Plot the euclidean distance against the Pearson score
 pos_ppi_euclidean_dist_list = []
@@ -724,14 +757,17 @@ pos_ppi_pearson_list = []
 for elut0, elut1, label in test_dataloader:
     output1, output2 = net(elut0.cuda(), elut1.cuda())
     euclidean_dist = F.pairwise_distance(output1, output2)
+
     pos_ppi_euclidean_dist_list.append(euclidean_dist.item())
     pos_ppi_pearson_list.append(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
 
-sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list)
-sns.kdeplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list)
+scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list)
+kde1 = sns.kdeplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list)
 
-# Test only positive ppis
-test_pos_elut_pair_dataset = elutionPairDataset(elutdf_list=[elut1_t10_rwn_df],
-                                                pos_ppis=test_pos_ppis,
-                                                neg_ppis=[])
+fig_scat1 = scat1.get_figure()
+fig_kde1 = kde1.get_figure()
+
+fig_scat1.savefig("pearson_vs_euc_scatter.png")
+fig_kde1.savefig("pearson_vs_euc_kde.png")
+
 
