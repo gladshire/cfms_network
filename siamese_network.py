@@ -24,6 +24,7 @@ import pandas as pd
 import qnorm
 import seaborn as sns
 
+import curses
 
 __FAST_VALID_TEST__ = False
 
@@ -33,7 +34,7 @@ DATADIR_PPIS = "data/ppi/"
 
 NUM_EPOCHS = 50
 BATCH_SIZE = 64
-LEARN_RATE = 1e-7
+LEARN_RATE = 1e-6
 NUM_THREAD = 2
 SUBSET_SIZE = 10000
 MOMENTUM = 0.9
@@ -541,8 +542,8 @@ criterion = contrastiveLoss()
 #
 #
 
-#optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
-optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
+optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
+#optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
 #scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
 #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.5)
 
@@ -649,6 +650,8 @@ for epoch in range(NUM_EPOCHS):
     print(f"  Average testing loss: {avg_test_loss}")
     if avg_test_loss < 0.00001:
         break
+    plot_loss(counter, loss_hist, filename=f"train_{epoch}.png")
+    plot_loss(valid_counter, valid_loss_hist, filename=f"valid_{epoch}.png")
 
 # Save the model weights
 torch.save(net.state_dict(), "./siamese_SGD.pt")
