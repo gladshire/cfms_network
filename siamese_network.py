@@ -26,6 +26,9 @@ import seaborn as sns
 
 import curses
 
+
+# Use random subset samples of test/validation sets for speed
+# Should not use this on actual runs
 __FAST_VALID_TEST__ = True
 
 DATADIR_ELUT = "data/elut/"
@@ -35,11 +38,12 @@ NUM_EPOCHS = 5
 BATCH_SIZE = 64
 LEARN_RATE = 1e-6
 NUM_THREAD = 2
-SUBSET_SIZE = 50000
+SUBSET_SIZE = 50000 # For __FAST_VALID_TEST__
 MOMENTUM = 0.9
 
 
-# Goal: to produce a network capable of discerning similarity in elution profiles between two proteins
+# Goal: to produce a network for discerning similarity in elution profiles between two proteins
+
 # Want to split proteins from complexes into datasets as partners. All proteins from a given complex must
 # be in the same set
 # How do produce positive, negative labels?
