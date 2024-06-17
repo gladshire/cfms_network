@@ -26,17 +26,16 @@ import seaborn as sns
 
 import curses
 
-__FAST_VALID_TEST__ = False
-
+__FAST_VALID_TEST__ = True
 
 DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
 
-NUM_EPOCHS = 50
+NUM_EPOCHS = 5
 BATCH_SIZE = 64
 LEARN_RATE = 1e-6
 NUM_THREAD = 2
-SUBSET_SIZE = 10000
+SUBSET_SIZE = 50000
 MOMENTUM = 0.9
 
 
@@ -252,6 +251,7 @@ def plot_loss(iteration, loss, filename=None):
         plt.savefig(filename)
     else:
         plt.show()
+    plt.clf()
 
 
 
@@ -542,8 +542,8 @@ criterion = contrastiveLoss()
 #
 #
 
-optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
-#optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
+#optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
+optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
 #scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
 #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.5)
 
@@ -650,8 +650,8 @@ for epoch in range(NUM_EPOCHS):
     print(f"  Average testing loss: {avg_test_loss}")
     if avg_test_loss < 0.00001:
         break
-    plot_loss(counter, loss_hist, filename=f"train_{epoch}.png")
-    plot_loss(valid_counter, valid_loss_hist, filename=f"valid_{epoch}.png")
+    plot_loss(counter, loss_hist, filename=f"train_{epoch+1}.png")
+    plot_loss(valid_counter, valid_loss_hist, filename=f"valid_{epoch+1}.png")
 
 # Save the model weights
 torch.save(net.state_dict(), "./siamese_SGD.pt")
@@ -715,15 +715,17 @@ pylab.plot(x,y,label="negative_pairs")
 pylab.plot(x,y2,label="positive_pairs")
 
 pylab.savefig("pos_neg_pairs.png")
+pylab.clf()
 
 hist1 = sns.histplot(neg_ppi_euclidean_dist_list, alpha=0.5, label='negative_pairs')
-hist2 = sns.histplot(pos_ppi_euclidean_dist_list, alpha=0.5, label='positive_pairs',color='orange')
-
 fig_hist1 = hist1.get_figure()
-fig_hist2 = hist2.get_figure()
-
 fig_hist1.savefig("fig_hist1.png")
+pylab.clf()
+
+hist2 = sns.histplot(pos_ppi_euclidean_dist_list, alpha=0.5, label='positive_pairs',color='orange')
+fig_hist2 = hist2.get_figure()
 fig_hist2.savefig("fig_hist2.png")
+pylab.clf()
 
 # Obtain Pearson correlation between protein pairs
 pos_ppi_pearson_list = []
@@ -743,16 +745,18 @@ y2 = norm.pdf(x, loc=np.mean(pos_ppi_pearson_list), scale=np.std(pos_ppi_pearson
 plt.plot(x,y,label="pearson_negative_pairs")
 plt.plot(x,y2,label="pearson_positive_pairs")
 plt.savefig("pos_neg_pairs_PEARSON.png")
+plt.clf()
 
 # Plot the counts of positive/negative Pearson scores
 hist1Pearson = sns.histplot(neg_ppi_pearson_list,alpha=0.5,label='negative_pairs')
-hist2Pearson = sns.histplot(pos_ppi_pearson_list,alpha=0.5,label='positive_pairs',color='orange')
-
 fig_hist1_pearson = hist1Pearson.get_figure()
-fig_hist2_pearson = hist2Pearson.get_figure()
-
 fig_hist1_pearson.savefig("fig_hist1_PEARSON.png")
+fig_hist1_pearson.clf()
+
+hist2Pearson = sns.histplot(pos_ppi_pearson_list,alpha=0.5,label='positive_pairs',color='orange')
+fig_hist2_pearson = hist2Pearson.get_figure()
 fig_hist2_pearson.savefig("fig_hist2_PEARSON.png")
+fig_hist2_pearson.clf()
 
 # Plot the euclidean distance against the Pearson score
 pos_ppi_euclidean_dist_list = []
@@ -765,12 +769,13 @@ for elut0, elut1, label in test_dataloader:
     pos_ppi_pearson_list.append(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
 
 scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list)
-kde1 = sns.kdeplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list)
-
 fig_scat1 = scat1.get_figure()
-fig_kde1 = kde1.get_figure()
-
 fig_scat1.savefig("pearson_vs_euc_scatter.png")
+fig_scat1.clf()
+
+kde1 = sns.kdeplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list)
+fig_kde1 = kde1.get_figure()
 fig_kde1.savefig("pearson_vs_euc_kde.png")
+fig_kde1.clf()
 
 
