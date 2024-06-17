@@ -29,13 +29,13 @@ import curses
 
 # Use random subset samples of test/validation sets for speed
 # Should not use this on actual runs
-__FAST_VALID_TEST__ = True
+__FAST_VALID_TEST__ = False
 
 DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
 
-NUM_EPOCHS = 5
-BATCH_SIZE = 64
+NUM_EPOCHS = 50
+BATCH_SIZE = 128
 LEARN_RATE = 1e-6
 NUM_THREAD = 2
 SUBSET_SIZE = 50000 # For __FAST_VALID_TEST__
@@ -256,6 +256,7 @@ def plot_loss(iteration, loss, filename=None):
     else:
         plt.show()
     plt.clf()
+    plt.cla()
 
 
 
@@ -385,7 +386,7 @@ class siameseNet(nn.Module):
         self.rnn1 = nn.LSTM(input_size=1, hidden_size=hidden_size, num_layers = 16,
                             bidirectional=True, batch_first=True)
 
-        self.rnn = nn.LSTM(input_size=8, hidden_size=hidden_size, num_layers = 2,
+        self.rnn = nn.LSTM(input_size=8, hidden_size=hidden_size, num_layers = 1,
                            bidirectional=True, batch_first=True)
 
         '''
@@ -658,7 +659,7 @@ for epoch in range(NUM_EPOCHS):
     plot_loss(valid_counter, valid_loss_hist, filename=f"valid_{epoch+1}.png")
 
 # Save the model weights
-torch.save(net.state_dict(), "./siamese_SGD.pt")
+torch.save(net.state_dict(), "./net_SGD.pt")
 
 # Plot the training and validation loss
 plot_loss(counter, loss_hist, filename="train_loss.png")
@@ -667,21 +668,18 @@ plot_loss(valid_counter, valid_loss_hist, filename="valid_loss.png")
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
+
+# TEST EUCLIDEAN
 # Test only positive ppis
-test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
+test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=[elut1_t10_qtn_df],
                                                    pos_ppis=test_pos_ppis,
                                                    neg_ppis=[],
                                                    transform=True)
-subset_indices = torch.randperm(len(test_pos_elution_pair_dataset))[:SUBSET_SIZE]
-subset_test_pos_elution_pair_dataset = Subset(test_pos_elution_pair_dataset, subset_indices)
+test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset, num_workers=1, batch_size=1,
+                                 shuffle=True, drop_last=True)
 
-if __FAST_VALID_TEST__:
-    test_pos_dataloader = DataLoader(subset_test_pos_elution_pair_dataset, num_workers=1, batch_size=1,
-                                     shuffle=True, drop_last=True)
-else:
-    test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset, num_workers=1, batch_size=1,
-                                     shuffle=True, drop_last=True)
-
+# Construct a list of euclidean distances between two positive protein pairs
+# We want these to be smaller, as the network should recognize their similarity
 pos_ppi_euclidean_dist_list = []
 for elut0, elut1, label in test_pos_dataloader:
     output1, output2 = net(elut0.cuda(), elut1.cuda())
@@ -689,20 +687,15 @@ for elut0, elut1, label in test_pos_dataloader:
     pos_ppi_euclidean_dist_list.append(euclidean_dist.item())
 
 # Test only negative ppis
-test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
+test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=[elut1_t10_qtn_df],
                                                    pos_ppis=[],
                                                    neg_ppis=test_neg_ppis,
                                                    transform=True)
-subset_indices = torch.randperm(len(test_pos_elution_pair_dataset))[:SUBSET_SIZE]
-subset_test_neg_elution_pair_dataset = Subset(test_neg_elution_pair_dataset, subset_indices)
+test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset, num_workers=1, batch_size=1,
+                                 shuffle=True, drop_last=True)
 
-if __FAST_VALID_TEST__:
-    test_neg_dataloader = DataLoader(subset_test_neg_elution_pair_dataset, num_workers=1, batch_size=1,
-                                     shuffle=True, drop_last=True)
-else:
-    test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset, num_workers=1, batch_size=1,
-                                     shuffle=True, drop_last=True)
-
+# Construct a list of euclidean distances between two negative protein pairs
+# We want these to be larger, as the network should recognize their dissimilarity
 neg_ppi_euclidean_dist_list = []
 for elut0, elut1, label in test_neg_dataloader:
     output1, output2 = net(elut0.cuda(), elut1.cuda())
@@ -710,30 +703,33 @@ for elut0, elut1, label in test_neg_dataloader:
     neg_ppi_euclidean_dist_list.append(euclidean_dist.item())
 
 
-# Plot the mean euclidean distance between positive and negative protein pairs
+# Plot the PDF of the euclidean distance between positive and negative protein pairs
 x = np.linspace(-10,20,1000)
 y = norm.pdf(x, loc=np.mean(neg_ppi_euclidean_dist_list), scale=np.std(neg_ppi_euclidean_dist_list))
 y2 = norm.pdf(x, loc=np.mean(pos_ppi_euclidean_dist_list), scale=np.std(pos_ppi_euclidean_dist_list))
 
 pylab.plot(x,y,label="negative_pairs")
 pylab.plot(x,y2,label="positive_pairs")
-
-pylab.savefig("pos_neg_pairs.png")
+pylab.title("PDFs of Euclidean distances after model transform")
+pylab.legend()
+pylab.savefig("pos_neg_pairs_EUCLIDEAN.png")
 pylab.clf()
+pylab.cla()
 
-hist1 = sns.histplot(neg_ppi_euclidean_dist_list, alpha=0.5, label='negative_pairs')
-fig_hist1 = hist1.get_figure()
-fig_hist1.savefig("fig_hist1.png")
+
+sns.histplot(neg_ppi_euclidean_dist_list, alpha=0.5, label='negative pairs')
+sns.histplot(pos_ppi_euclidean_dist_list, alpha=0.5, label='positive pairs', color='orange')
+plt.title("Euclidean distance counts")
+plt.legend()
+plt.savefig("fig_hist_EUCLIDEAN.png")
 pylab.clf()
+pylab.cla()
 
-hist2 = sns.histplot(pos_ppi_euclidean_dist_list, alpha=0.5, label='positive_pairs',color='orange')
-fig_hist2 = hist2.get_figure()
-fig_hist2.savefig("fig_hist2.png")
-pylab.clf()
 
+# TEST PEARSON
 # Obtain Pearson correlation between protein pairs
 pos_ppi_pearson_list = []
-for elut0, elut1, label in test_dataloader:
+for elut0, elut1, label in test_pos_dataloader:
     pos_ppi_pearson_list.append(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
 
 neg_ppi_pearson_list = []
@@ -748,24 +744,25 @@ y2 = norm.pdf(x, loc=np.mean(pos_ppi_pearson_list), scale=np.std(pos_ppi_pearson
 
 plt.plot(x,y,label="pearson_negative_pairs")
 plt.plot(x,y2,label="pearson_positive_pairs")
+plt.title("PDFs of Pearson scores")
+plt.legend()
 plt.savefig("pos_neg_pairs_PEARSON.png")
 plt.clf()
+plt.cla()
 
 # Plot the counts of positive/negative Pearson scores
-hist1Pearson = sns.histplot(neg_ppi_pearson_list,alpha=0.5,label='negative_pairs')
-fig_hist1_pearson = hist1Pearson.get_figure()
-fig_hist1_pearson.savefig("fig_hist1_PEARSON.png")
-fig_hist1_pearson.clf()
-
-hist2Pearson = sns.histplot(pos_ppi_pearson_list,alpha=0.5,label='positive_pairs',color='orange')
-fig_hist2_pearson = hist2Pearson.get_figure()
-fig_hist2_pearson.savefig("fig_hist2_PEARSON.png")
-fig_hist2_pearson.clf()
+sns.histplot(neg_ppi_pearson_list, alpha=0.5, label='negative pairs')
+sns.histplot(pos_ppi_pearson_list, alpha=0.5, label='positive pairs', color='orange')
+plt.title("Pearson score counts")
+plt.legend()
+plt.savefig("fig_hist_PEARSON.png")
+pylab.clf()
+pylab.cla()
 
 # Plot the euclidean distance against the Pearson score
 pos_ppi_euclidean_dist_list = []
 pos_ppi_pearson_list = []
-for elut0, elut1, label in test_dataloader:
+for elut0, elut1, label in test_pos_dataloader:
     output1, output2 = net(elut0.cuda(), elut1.cuda())
     euclidean_dist = F.pairwise_distance(output1, output2)
 
