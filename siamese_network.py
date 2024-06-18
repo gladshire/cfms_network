@@ -29,17 +29,17 @@ import curses
 
 # Use random subset samples of test/validation sets for speed
 # Should not use this on actual runs
-__FAST_VALID_TEST__ = False
+__FAST_VALID_TEST__ = True
 
 DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
 
 NUM_EPOCHS = 50
 BATCH_SIZE = 128
-LEARN_RATE = 1e-6
+LEARN_RATE = 1e-3
 NUM_THREAD = 2
-SUBSET_SIZE = 50000 # For __FAST_VALID_TEST__
-MOMENTUM = 0.9
+SUBSET_SIZE = 100000 # For __FAST_VALID_TEST__
+MOMENTUM = 0
 
 
 # Goal: to produce a network for discerning similarity in elution profiles between two proteins
@@ -237,20 +237,10 @@ for i in test_neg_ppis:
         testelut_neg_ppis.append(i)
 
 
-
-def imshow(img, text=None):
-    npimg = img.numpy()
-    plt.axis("off")
-    if text:
-        plt.text(75, 8, text, style='italic', fontweight='bold',
-                 bbox={'facecolor':'white', 'alpha':0.8, 'pad':10})
-
-    plt.imshow(np.transpose(npimg, (1, 2, 0)))
-    plt.show()
-
-def plot_loss(iteration, loss, filename=None):
-    plt.plot(iteration, loss)
-    plt.title("Contrastive loss")
+def plot_loss(iteration, loss, color, xaxis, title, filename=None):
+    plt.plot(iteration, loss, color=color)
+    plt.title(title)
+    plt.xlabel(xaxis)
     if filename:
         plt.savefig(filename)
     else:
@@ -383,24 +373,9 @@ class siameseNet(nn.Module):
                 nn.ReLU(inplace=True)
         )
 
-        self.rnn1 = nn.LSTM(input_size=1, hidden_size=hidden_size, num_layers = 16,
-                            bidirectional=True, batch_first=True)
-
-        self.rnn = nn.LSTM(input_size=8, hidden_size=hidden_size, num_layers = 1,
+        self.rnn = nn.LSTM(input_size=8, hidden_size=hidden_size, num_layers = 2,
                            bidirectional=True, batch_first=True)
 
-        '''
-        # miles: Attempt at a Transformer encoder.
-        #   - Tends to overfit with convolution
-        #   - Seems high-bias without convolution, minimal learning if at all
-        self.transformer_encoder = nn.TransformerEncoder(
-                nn.TransformerEncoderLayer(d_model=1,
-                                           nhead=1, dim_feedforward=64,
-                                           dropout=0.3,
-                                           batch_first=True),
-                num_layers=16
-        )
-        '''
 
         self.cnn2 = nn.Sequential(
                 nn.ConvTranspose1d(in_channels=2*hidden_size, out_channels=16,
@@ -416,11 +391,6 @@ class siameseNet(nn.Module):
 
         )
         self.fc = nn.Sequential(
-                #nn.Linear(128, 64),
-                #nn.ReLU(inplace=True),
-
-                #nn.Linear(64, 32),
-                #nn.ReLU(inplace=True),
 
                 nn.Linear(30, 64),
                 nn.ReLU(inplace=True),
@@ -430,17 +400,6 @@ class siameseNet(nn.Module):
 
                 nn.Linear(32, 2)
         )
-        '''
-        self.fc = nn.Sequential(
-                nn.Linear(30, 64),
-                nn.ReLU(inplace=True),
-
-                nn.Linear(64, 32),
-                nn.ReLU(inplace=True),
-
-                nn.Linear(32, 2)
-        )
-        '''
 
     # Function called on both images, x, to determine their similarity
     def forward_once(self, x):
@@ -449,12 +408,9 @@ class siameseNet(nn.Module):
 
         # Prepare for recurrent layers
         y = y.permute(0, 2, 1)
-        #y = x.permute(0, 2, 1)
+
         # Apply bidirectional recurrency
         y, _ = self.rnn(y)
-        #y, _ = self.rnn1(y)
-        # Apply Transformer Layer
-        #y = self.transformer_encoder(y)
 
         # Prepare for convolutional decoding
         y = y.permute(0, 2, 1)
@@ -549,8 +505,8 @@ criterion = contrastiveLoss()
 
 #optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
 optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
-#scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
-#scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.5)
+#scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, factor=0.1)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.1)
 
 # Zero the gradients
 optimizer.zero_grad()
@@ -559,6 +515,8 @@ counter = []
 loss_hist = []
 valid_counter = []
 valid_loss_hist = []
+epoch_hist = []
+avg_test_loss_hist = []
 iteration_num = 0
 valid_iteration_num = 0
 
@@ -572,7 +530,10 @@ net.apply(weights_init)
 
 # Training loop
 #net.train()
-print("Instantiating model training with following hyperparameters")
+print("Instantiating model training with following architecture:")
+print(net)
+
+print("\nWith following hyperparameters")
 print(f"Number of epochs: {NUM_EPOCHS}")
 print(f"Batch size: {BATCH_SIZE}")
 print(f"Learn rate: {LEARN_RATE}")
@@ -639,7 +600,15 @@ for epoch in range(NUM_EPOCHS):
             valid_loss_hist.append(valid_loss_contrastive.item())
     avg_valid_loss = valid_loss / len(valid_dataloader)
 
-    #scheduler.step(avg_valid_loss)
+    # Get learning rate before and after stepping the scheduler
+    before_lr = optimizer.param_groups[0]["lr"]
+    scheduler.step()
+    after_lr = optimizer.param_groups[0]["lr"]
+
+    # Alert user if learning rate has changed
+    if before_lr != after_lr:
+        print(f"  Decreasing learning rate from {before_lr} to {after_lr}")
+
 
     with torch.no_grad():
         test_loss = 0.0
@@ -649,21 +618,34 @@ for epoch in range(NUM_EPOCHS):
             loss_test_contrastive = criterion(output1_test, output2_test, label_test)
             test_loss += loss_test_contrastive
 
+    # Calculate average loss on test dataset
     avg_test_loss = test_loss / len(test_dataloader)
+    epoch_hist.append(epoch+1)
+    avg_test_loss_hist.append(avg_test_loss)
     print(f"\nEnd of epoch summary")
     print(f"  Average validation loss: {avg_valid_loss}")
     print(f"  Average testing loss: {avg_test_loss}")
     if avg_test_loss < 0.00001:
         break
-    plot_loss(counter, loss_hist, filename=f"train_{epoch+1}.png")
-    plot_loss(valid_counter, valid_loss_hist, filename=f"valid_{epoch+1}.png")
+    plot_loss(counter, loss_hist, title="Contrastive Loss - Train",
+              xaxis="Batches", color='blue', filename=f"train_{epoch+1}.png")
+    plot_loss(valid_counter, valid_loss_hist, title="Contrastive Loss - Validation",
+              xaxis="Batches", color = 'orange', filename=f"valid_{epoch+1}.png")
+    plot_loss(epoch_hist, avg_test_loss_hist, title="Avg Cont Loss - Testing", 
+              color='red', xaxis="Epochs", filename=f"test_{epoch+1}.png")
 
 # Save the model weights
 torch.save(net.state_dict(), "./net_SGD.pt")
 
-# Plot the training and validation loss
-plot_loss(counter, loss_hist, filename="train_loss.png")
-plot_loss(valid_counter, valid_loss_hist, filename="valid_loss.png")
+# Plot the training, validation, test loss
+'''
+plot_loss(counter, loss_hist, title="Contrastive Loss - Training",
+          color='blue', filename="train_loss.png")
+plot_loss(valid_counter, valid_loss_hist, title="Contrastive Loss - Validation",
+          color='orange', filename="valid_loss.png")
+plot_loss(epoch_hist, avg_test_loss_hist, title="Average Contrastive Loss - Testing",
+          color='red', filename='test_loss.png')
+'''
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -717,8 +699,10 @@ pylab.clf()
 pylab.cla()
 
 
-sns.histplot(neg_ppi_euclidean_dist_list, alpha=0.5, label='negative pairs')
-sns.histplot(pos_ppi_euclidean_dist_list, alpha=0.5, label='positive pairs', color='orange')
+sns.histplot(neg_ppi_euclidean_dist_list, alpha=0.5, bins=50,
+             label='negative pairs')
+sns.histplot(pos_ppi_euclidean_dist_list, alpha=0.5, bins=50,
+             label='positive pairs', color='orange')
 plt.title("Euclidean distance counts")
 plt.legend()
 plt.savefig("fig_hist_EUCLIDEAN.png")
@@ -751,8 +735,10 @@ plt.clf()
 plt.cla()
 
 # Plot the counts of positive/negative Pearson scores
-sns.histplot(neg_ppi_pearson_list, alpha=0.5, label='negative pairs')
-sns.histplot(pos_ppi_pearson_list, alpha=0.5, label='positive pairs', color='orange')
+sns.histplot(neg_ppi_pearson_list, alpha=0.5, bins=50,
+             label='negative pairs')
+sns.histplot(pos_ppi_pearson_list, alpha=0.5, bins=50,
+             label='positive pairs', color='orange')
 plt.title("Pearson score counts")
 plt.legend()
 plt.savefig("fig_hist_PEARSON.png")
@@ -769,12 +755,17 @@ for elut0, elut1, label in test_pos_dataloader:
     pos_ppi_euclidean_dist_list.append(euclidean_dist.item())
     pos_ppi_pearson_list.append(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
 
-scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list)
+
+# Plot the pearson scores for positive PPIs against the euclidean score
+#   Euclidean distance should be small, preferably as close to 0 as possible
+scat1 = sns.scatterplot(data=(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list))
 fig_scat1 = scat1.get_figure()
 fig_scat1.savefig("pearson_vs_euc_scatter.png")
 fig_scat1.clf()
 
-kde1 = sns.kdeplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list)
+# Plot a contour graph of the positive PPIs
+#   We want to make the glob near (0, 0) larger
+kde1 = sns.kdeplot(data=(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list))
 fig_kde1 = kde1.get_figure()
 fig_kde1.savefig("pearson_vs_euc_kde.png")
 fig_kde1.clf()
