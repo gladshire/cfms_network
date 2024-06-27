@@ -33,7 +33,7 @@ import os
 
 # Use random subset samples of test/validation sets for speed
 # Should not use this on actual runs
-__FAST_VALID_TEST__ = False
+__FAST_VALID_TEST__ = True
 
 DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
@@ -660,8 +660,8 @@ if trainNet:
         num_batches_valid = len(valid_dataloader)
         for valid_i, (valid_elut0, valid_elut1, valid_label) in enumerate(valid_dataloader, 0):
             pccListValid = []
-            for ppi0, ppi1 in zip(elut0, elut1):
-                pccListValid.append(scipy.stats.pearsonr(ppi0[0], ppi1[0])[0])
+            for valid_ppi0, valid_ppi1 in zip(valid_elut0, valid_elut1):
+                pccListValid.append(scipy.stats.pearsonr(valid_ppi0[0], valid_ppi1[0])[0])
 
             pcc = torch.tensor(pccListValid, dtype=torch.float32).cuda()
 
@@ -696,14 +696,14 @@ if trainNet:
 
         with torch.no_grad():
             test_loss = 0.0
-            for test_i, (elut0_test, elut1_test, label_test) in enumerate(test_dataloader, 0):
-                pccListValid = []
-                for ppi0, ppi1 in zip(elut0, elut1):
-                    pccListTest.append(scipy.stats.pearsonr(ppi0[0], ppi1[0])[0])
+            for test_i, (test_elut0, test_elut1, test_label) in enumerate(test_dataloader, 0):
+                pccListTest = []
+                for test_ppi0, test_ppi1 in zip(test_elut0, test_elut1):
+                    pccListTest.append(scipy.stats.pearsonr(test_ppi0[0], test_ppi1[0])[0])
                 pcc = torch.tensor(pccListTest, dtype=torch.float32).cuda()
-                elut0_test, elut1_test, label_test = elut0_test.cuda(), elut1_test.cuda(), label_test.cuda()
-                output1_test, output2_test = net(elut0_test, elut1_test, pcc)
-                loss_test_contrastive = criterion(output1_test, output2_test, label_test)
+                test_elut0, test_elut1, test_label = test_elut0.cuda(), test_elut1.cuda(), test_label.cuda()
+                output1_test, output2_test = net(test_elut0, test_elut1, pcc)
+                loss_test_contrastive = criterion(output1_test, output2_test, test_label)
                 test_loss += loss_test_contrastive
 
         # Calculate average loss on test dataset
