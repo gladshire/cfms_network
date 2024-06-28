@@ -33,13 +33,13 @@ import os
 
 # Use random subset samples of test/validation sets for speed
 # Should not use this on actual runs
-__FAST_VALID_TEST__ = True
+__FAST_VALID_TEST__ = False
 
 DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
 
-NUM_EPOCHS = 50
-BATCH_SIZE = 256
+NUM_EPOCHS = 25
+BATCH_SIZE = 128
 LEARN_RATE = 0.001
 NUM_THREAD = 2
 SUBSET_SIZE = 10000 # For __FAST_VALID_TEST__
@@ -197,10 +197,10 @@ elut12_t10_qtn_df = qnorm.quantile_normalize(elut12_t10_df, axis=0)
 
 
 
-'''
 elut_list = [elut1_t10_df, elut2_t10_df, elut3_t10_df, elut4_t10_df,
              elut5_t10_df, elut6_t10_df, elut7_t10_df, elut8_t10_df,
              elut9_t10_df, elut10_t10_df, elut11_t10_df, elut12_t10_df]
+'''
 elut_list = [elut1_t10_rwn_df, elut2_t10_rwn_df, elut3_t10_rwn_df,
              elut4_t10_rwn_df, elut5_t10_rwn_df]
 elut_list = [elut1_t10_rwn_df, elut2_t10_rwn_df, elut3_t10_rwn_df,
@@ -208,13 +208,11 @@ elut_list = [elut1_t10_rwn_df, elut2_t10_rwn_df, elut3_t10_rwn_df,
              elut5_t10_rwn_df, elut6_t10_rwn_df, elut7_t10_rwn_df,
              elut8_t10_rwn_df, elut9_t10_rwn_df, elut10_t10_rwn_df,
              elut11_t10_rwn_df, elut12_t10_rwn_df]
-'''
 elut_list = [elut1_t10_qtn_df, elut2_t10_qtn_df, elut3_t10_qtn_df,
              elut4_t10_qtn_df, elut5_t10_qtn_df, elut4_t10_qtn_df,
              elut5_t10_qtn_df, elut6_t10_qtn_df, elut7_t10_qtn_df,
              elut8_t10_qtn_df, elut9_t10_qtn_df, elut10_t10_qtn_df,
              elut11_t10_qtn_df, elut12_t10_qtn_df]
-'''
 elut_list = [elut1_t10_rsm_df, elut2_t10_rsm_df, elut3_t10_rsm_df,
              elut4_t10_rsm_df, elut5_t10_rsm_df, elut4_t10_rsm_df,
              elut5_t10_rsm_df, elut6_t10_rsm_df, elut7_t10_rsm_df,
@@ -539,6 +537,7 @@ if len(sys.argv) != 1:
     model_to_load = sys.argv[1]
     net.load_state_dict(torch.load(model_to_load))
     trainNet = False
+    print(f"Skipping training. Performing benchmark on {model_to_load}")
     net.eval()
 
 
@@ -615,6 +614,8 @@ if trainNet:
         num_batches = len(train_dataloader)
         for i, (elut0, elut1, label) in enumerate(train_dataloader, 0):
             pccList = []
+
+            print(label)
 
             # Obtain Pearson correlation between elut0, elut1
             #print(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
@@ -702,8 +703,8 @@ if trainNet:
                     pccListTest.append(scipy.stats.pearsonr(test_ppi0[0], test_ppi1[0])[0])
                 pcc = torch.tensor(pccListTest, dtype=torch.float32).cuda()
                 test_elut0, test_elut1, test_label = test_elut0.cuda(), test_elut1.cuda(), test_label.cuda()
-                output1_test, output2_test = net(test_elut0, test_elut1, pcc)
-                loss_test_contrastive = criterion(output1_test, output2_test, test_label)
+                output1, output2 = net(test_elut0, test_elut1, pcc)
+                loss_test_contrastive = criterion(output1, output2, test_label)
                 test_loss += loss_test_contrastive
 
         # Calculate average loss on test dataset
@@ -722,7 +723,6 @@ if trainNet:
         if epoch != 0:
             plot_loss(epoch_hist, avg_test_loss_hist, title="Avg Cont Loss - Testing", 
                       color='red', xaxis="Epochs", filename=f"test_{epoch+1}.png")
-        # TODO: Output predictions to file on disk for analysis/exploration via Jupyter
 
 # Save the model weights
 torch.save(net.state_dict(), "./net_SGD.pt")
@@ -742,8 +742,12 @@ test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset, num_workers=1, b
 # Construct a list of euclidean distances between two positive protein pairs
 # We want these to be smaller, as the network should recognize their similarity
 pos_ppi_euclidean_dist_list = []
-for elut0, elut1, label in test_pos_dataloader:
-    output1, output2 = net(elut0.cuda(), elut1.cuda())
+for pos_elut0, pos_elut1, pos_label in test_pos_dataloader:
+    pccListPos = []
+    for pos_ppi0, pos_ppi1 in zip(pos_elut0, pos_elut1):
+         pccListPos.append(scipy.stats.pearsonr(pos_ppi0[0], pos_ppi1[0])[0])
+    pcc = torch.tensor(pccListPos, dtype=torch.float32).cuda()
+    output1, output2 = net(pos_elut0.cuda(), pos_elut1.cuda(), pcc)
     euclidean_dist = F.pairwise_distance(output1, output2)
     pos_ppi_euclidean_dist_list.append(euclidean_dist.item())
 
@@ -758,8 +762,12 @@ test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset, num_workers=1, b
 # Construct a list of euclidean distances between two negative protein pairs
 # We want these to be larger, as the network should recognize their dissimilarity
 neg_ppi_euclidean_dist_list = []
-for elut0, elut1, label in test_neg_dataloader:
-    output1, output2 = net(elut0.cuda(), elut1.cuda())
+for neg_elut0, neg_elut1, neg_label in test_neg_dataloader:
+    pccListNeg = []
+    for neg_ppi0, neg_ppi1 in zip(neg_elut0, neg_elut1):
+         pccListNeg.append(scipy.stats.pearsonr(neg_ppi0[0], neg_ppi1[0])[0])
+    pcc = torch.tensor(pccListNeg, dtype=torch.float32).cuda()
+    output1, output2 = net(neg_elut0.cuda(), neg_elut1.cuda(), pcc)
     euclidean_dist = F.pairwise_distance(output1, output2)
     neg_ppi_euclidean_dist_list.append(euclidean_dist.item())
 
@@ -831,24 +839,50 @@ pylab.cla()
 # Plot the euclidean distance against the Pearson score
 pos_ppi_euclidean_dist_list = []
 pos_ppi_pearson_list = []
-for elut0, elut1, label in test_pos_dataloader:
-    output1, output2 = net(elut0.cuda(), elut1.cuda())
+for pos_elut0, pos_elut1, label in test_pos_dataloader:
+    pccListPos = []
+    for pos_ppi0, pos_ppi1 in zip(pos_elut0, pos_elut1):
+         pccListPos.append(scipy.stats.pearsonr(pos_ppi0[0], pos_ppi1[0])[0])
+    pcc = torch.tensor(pccListPos, dtype=torch.float32).cuda()
+    output1, output2 = net(pos_elut0.cuda(), pos_elut1.cuda(), pcc)
     euclidean_dist = F.pairwise_distance(output1, output2)
 
     pos_ppi_euclidean_dist_list.append(euclidean_dist.item())
     pos_ppi_pearson_list.append(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
 
 
+neg_ppi_euclidean_dist_list = []
+neg_ppi_pearson_list = []
+for neg_elut0, neg_elut1, label in test_neg_dataloader:
+    pccListNeg = []
+    for neg_ppi0, neg_ppi1 in zip(neg_elut0, neg_elut1):
+         pccListNeg.append(scipy.stats.pearsonr(neg_ppi0[0], neg_ppi1[0])[0])
+    pcc = torch.tensor(pccListNeg, dtype=torch.float32).cuda()
+    output1, output2 = net(neg_elut0.cuda(), neg_elut1.cuda(), pcc)
+    euclidean_dist = F.pairwise_distance(output1, output2)
+
+    neg_ppi_euclidean_dist_list.append(euclidean_dist.item())
+    neg_ppi_pearson_list.append(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
+
+kde_data = {
+        'Euclidean Distance': pos_ppi_euclidean_dist_list + neg_ppi_euclidean_dist_list,
+        'Pearson Score': pos_ppi_pearson_list + neg_ppi_pearson_list,
+        'Label': ['Positive'] * len(pos_ppi_euclidean_dist_list) +
+                 ['Negative'] * len(neg_ppi_euclidean_dist_list)
+}
+
+kde_df = pd.DataFrame(kde_data)
+
 # Plot the pearson scores for positive PPIs against the euclidean score
 #   Euclidean distance should be small, preferably as close to 0 as possible
-scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list)
+scat1 = sns.scatterplot(data=kde_df, hue='Label', s=10)
 fig_scat1 = scat1.get_figure()
 fig_scat1.savefig("pearson_vs_euc_scatter.png")
 fig_scat1.clf()
 
 # Plot a contour graph of the positive PPIs
 #   We want to make the glob near (0, 0) larger
-kde1 = sns.kdeplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list)
+kde1 = sns.kdeplot(data=kde_df, hue='Label')
 fig_kde1 = kde1.get_figure()
 fig_kde1.savefig("pearson_vs_euc_kde.png")
 fig_kde1.clf()
