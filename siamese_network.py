@@ -46,6 +46,8 @@ SUBSET_SIZE = 1000 # For __FAST_VALID_TEST__
 TEMPERATURE = 25.0 # For cosine similarity contrastive loss
 MOMENTUM = 0
 
+SAMPLE_RATE = 10 # How many batches between samples (for loss curve)
+
 
 # Goal: to produce a network for discerning similarity in elution profiles between two proteins
 
@@ -647,10 +649,9 @@ if trainNet:
             # Optimize
             optimizer.step()
 
-            if i % 100 == 0:
-                print(f"\n  Batch: {i} of {num_batches} ({float(i/num_batches * 100):.2f} %)")
-                print(f"    Current training loss: {loss_train_contrastive.item()}")
-                iteration_num += 100
+            if i % SAMPLE_RATE == 0:
+                print(f"  Batch [{i} / {num_batches}] Training Loss: {loss_train_contrastive.item()}")
+                iteration_num += SAMPLE_RATE
 
                 counter.append(iteration_num)
                 loss_hist.append(loss_train_contrastive.item())
@@ -680,10 +681,9 @@ if trainNet:
             valid_loss_contrastive = criterion(valid_output1, valid_output2, valid_label)
             valid_loss += valid_loss_contrastive.item()
 
-            if valid_i % 100 == 0:
-                print(f"  Batch: {valid_i} of {num_batches_valid} ({float(valid_i/num_batches_valid * 100):.2f} %)")
-                print(f"    Validation Current loss: {valid_loss_contrastive.item()}")
-                valid_iteration_num += 100
+            if valid_i % SAMPLE_RATE == 0:
+                print(f"  Batch [{valid_i} / {num_batches_valid}] Validation Loss: {valid_loss_contrastive.item()}")
+                valid_iteration_num += SAMPLE_RATE
 
                 valid_counter.append(valid_iteration_num)
                 valid_loss_hist.append(valid_loss_contrastive.item())
