@@ -933,3 +933,13 @@ fig_kde1.savefig("pearson_vs_euc_kde.png")
 fig_kde1.clf()
 
 
+
+# Print metrics to txt file
+
+#   min_avg_valid_loss
+#   min_avg_test_loss
+#   
+with open("output.log", 'w') as outFile:
+    outFile.write(f"Minimum Average Validation Loss: {min_avg_valid_loss:.4f}\n")
+    outFile.write(f"Minimum Average Test Loss: {min_avg_test_loss:.4f}\n")
+outFile.close()
