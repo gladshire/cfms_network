@@ -38,9 +38,9 @@ __FAST_VALID_TEST__ = False
 DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
 
-NUM_EPOCHS = 250
-BATCH_SIZE = 16
-LEARN_RATE = 0.001
+NUM_EPOCHS = 25
+BATCH_SIZE = 32
+LEARN_RATE = 1e-3
 NUM_THREAD = 2
 SUBSET_SIZE = 1000 # For __FAST_VALID_TEST__
 TEMPERATURE = 25.0 # For cosine similarity contrastive loss
@@ -48,7 +48,7 @@ MOMENTUM = 0
 
 SAMPLE_RATE = 10 # How many batches between samples (for loss curve)
 
-
+  
 # Goal: to produce a network for discerning similarity in elution profiles between two proteins
 
 # Want to split proteins from complexes into datasets as partners. All proteins from a given complex must
@@ -147,60 +147,240 @@ elut5_t10_rwn_df = elut5_t10_df.div(elut5_t10_df.max(axis=1), axis=0)
 elut5_t10_rsm_df = elut5_t10_df.div(elut5_t10_df.sum(axis=1), axis=0)
 elut5_t10_qtn_df = qnorm.quantile_normalize(elut5_t10_df, axis=0)
 
-elut6_df = pd.read_csv(DATADIR_ELUT + "PXD001220.elut", sep='\t')
+elut6_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_1.elut", sep='\t')
 elut6_df = elut6_df.set_index('Unnamed: 0')
 elut6_t10_df = elut6_df[elut6_df.sum(axis=1) > 10]
 elut6_t10_rwn_df = elut6_t10_df.div(elut6_t10_df.max(axis=1), axis=0)
 elut6_t10_rsm_df = elut6_t10_df.div(elut6_t10_df.sum(axis=1), axis=0)
 elut6_t10_qtn_df = qnorm.quantile_normalize(elut6_t10_df, axis=0)
 
-elut7_df = pd.read_csv(DATADIR_ELUT + "PXD003754.elut", sep='\t')
+elut7_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_2.elut", sep='\t')
 elut7_df = elut7_df.set_index('Unnamed: 0')
 elut7_t10_df = elut7_df[elut7_df.sum(axis=1) > 10]
 elut7_t10_rwn_df = elut7_t10_df.div(elut7_t10_df.max(axis=1), axis=0)
 elut7_t10_rsm_df = elut7_t10_df.div(elut7_t10_df.sum(axis=1), axis=0)
 elut7_t10_qtn_df = qnorm.quantile_normalize(elut7_t10_df, axis=0)
 
-elut8_df = pd.read_csv(DATADIR_ELUT + "PXD009833.elut", sep='\t')
+elut8_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_3.elut", sep='\t')
 elut8_df = elut8_df.set_index('Unnamed: 0')
 elut8_t10_df = elut8_df[elut8_df.sum(axis=1) > 10]
 elut8_t10_rwn_df = elut8_t10_df.div(elut8_t10_df.max(axis=1), axis=0)
 elut8_t10_rsm_df = elut8_t10_df.div(elut8_t10_df.sum(axis=1), axis=0)
 elut8_t10_qtn_df = qnorm.quantile_normalize(elut8_t10_df, axis=0)
 
-elut9_df = pd.read_csv(DATADIR_ELUT + "PXD009834.elut", sep='\t')
+elut9_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_4.elut", sep='\t')
 elut9_df = elut9_df.set_index('Unnamed: 0')
 elut9_t10_df = elut9_df[elut9_df.sum(axis=1) > 10]
 elut9_t10_rwn_df = elut9_t10_df.div(elut9_t10_df.max(axis=1), axis=0)
 elut9_t10_rsm_df = elut9_t10_df.div(elut9_t10_df.sum(axis=1), axis=0)
 elut9_t10_qtn_df = qnorm.quantile_normalize(elut9_t10_df, axis=0)
 
-elut10_df = pd.read_csv(DATADIR_ELUT + "PXD014820.elut", sep='\t')
+elut10_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_5.elut", sep='\t')
 elut10_df = elut10_df.set_index('Unnamed: 0')
 elut10_t10_df = elut10_df[elut10_df.sum(axis=1) > 10]
 elut10_t10_rwn_df = elut10_t10_df.div(elut10_t10_df.max(axis=1), axis=0)
 elut10_t10_rsm_df = elut10_t10_df.div(elut10_t10_df.sum(axis=1), axis=0)
 elut10_t10_qtn_df = qnorm.quantile_normalize(elut10_t10_df, axis=0)
 
-elut11_df = pd.read_csv(DATADIR_ELUT + "PXD015406.elut", sep='\t')
+elut11_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_6.elut", sep='\t')
 elut11_df = elut11_df.set_index('Unnamed: 0')
 elut11_t10_df = elut11_df[elut11_df.sum(axis=1) > 10]
 elut11_t10_rwn_df = elut11_t10_df.div(elut11_t10_df.max(axis=1), axis=0)
 elut11_t10_rsm_df = elut11_t10_df.div(elut11_t10_df.sum(axis=1), axis=0)
 elut11_t10_qtn_df = qnorm.quantile_normalize(elut11_t10_df, axis=0)
 
-elut12_df = pd.read_csv(DATADIR_ELUT + "MSV000081520.elut", sep='\t')
+elut12_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_7.elut", sep='\t')
 elut12_df = elut12_df.set_index('Unnamed: 0')
 elut12_t10_df = elut12_df[elut12_df.sum(axis=1) > 10]
 elut12_t10_rwn_df = elut12_t10_df.div(elut12_t10_df.max(axis=1), axis=0)
 elut12_t10_rsm_df = elut12_t10_df.div(elut12_t10_df.sum(axis=1), axis=0)
 elut12_t10_qtn_df = qnorm.quantile_normalize(elut12_t10_df, axis=0)
 
+elut13_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_8.elut", sep='\t')
+elut13_df = elut13_df.set_index('Unnamed: 0')
+elut13_t10_df = elut13_df[elut13_df.sum(axis=1) > 10]
+elut13_t10_rwn_df = elut13_t10_df.div(elut13_t10_df.max(axis=1), axis=0)
+elut13_t10_rsm_df = elut13_t10_df.div(elut13_t10_df.sum(axis=1), axis=0)
+elut13_t10_qtn_df = qnorm.quantile_normalize(elut13_t10_df, axis=0)
 
+elut14_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_9.elut", sep='\t')
+elut14_df = elut14_df.set_index('Unnamed: 0')
+elut14_t10_df = elut14_df[elut14_df.sum(axis=1) > 10]
+elut14_t10_rwn_df = elut14_t10_df.div(elut14_t10_df.max(axis=1), axis=0)
+elut14_t10_rsm_df = elut14_t10_df.div(elut14_t10_df.sum(axis=1), axis=0)
+elut14_t10_qtn_df = qnorm.quantile_normalize(elut14_t10_df, axis=0)
+
+elut15_df = pd.read_csv(DATADIR_ELUT + "Hs_IEX_1.elut", sep='\t')
+elut15_df = elut15_df.set_index('Unnamed: 0')
+elut15_t10_df = elut15_df[elut15_df.sum(axis=1) > 10]
+elut15_t10_rwn_df = elut15_t10_df.div(elut15_t10_df.max(axis=1), axis=0)
+elut15_t10_rsm_df = elut15_t10_df.div(elut15_t10_df.sum(axis=1), axis=0)
+elut15_t10_qtn_df = qnorm.quantile_normalize(elut15_t10_df, axis=0)
+
+elut16_df = pd.read_csv(DATADIR_ELUT + "Hs_IEX_2.elut", sep='\t')
+elut16_df = elut16_df.set_index('Unnamed: 0')
+elut16_t10_df = elut16_df[elut16_df.sum(axis=1) > 10]
+elut16_t10_rwn_df = elut16_t10_df.div(elut16_t10_df.max(axis=1), axis=0)
+elut16_t10_rsm_df = elut16_t10_df.div(elut16_t10_df.sum(axis=1), axis=0)
+elut16_t10_qtn_df = qnorm.quantile_normalize(elut16_t10_df, axis=0)
+
+elut17_df = pd.read_csv(DATADIR_ELUT + "T98G_glioblastoma_multiforme_cells_SEC_Conelly_2018_Bio1.elut", sep='\t')
+elut17_df = elut17_df.set_index('Unnamed: 0')
+elut17_t10_df = elut17_df[elut17_df.sum(axis=1) > 10]
+elut17_t10_rwn_df = elut17_t10_df.div(elut17_t10_df.max(axis=1), axis=0)
+elut17_t10_rsm_df = elut17_t10_df.div(elut17_t10_df.sum(axis=1), axis=0)
+elut17_t10_qtn_df = qnorm.quantile_normalize(elut17_t10_df, axis=0)
+
+elut18_df = pd.read_csv(DATADIR_ELUT + "T98G_glioblastoma_multiforme_cells_SEC_Conelly_2018_Bio2.elut", sep='\t')
+elut18_df = elut18_df.set_index('Unnamed: 0')
+elut18_t10_df = elut18_df[elut18_df.sum(axis=1) > 10]
+elut18_t10_rwn_df = elut18_t10_df.div(elut18_t10_df.max(axis=1), axis=0)
+elut18_t10_rsm_df = elut18_t10_df.div(elut18_t10_df.sum(axis=1), axis=0)
+elut18_t10_qtn_df = qnorm.quantile_normalize(elut18_t10_df, axis=0)
+
+elut19_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep1.elut", sep='\t')
+elut19_df = elut19_df.set_index('Unnamed: 0')
+elut19_t10_df = elut19_df[elut19_df.sum(axis=1) > 10]
+elut19_t10_rwn_df = elut19_t10_df.div(elut19_t10_df.max(axis=1), axis=0)
+elut19_t10_rsm_df = elut19_t10_df.div(elut19_t10_df.sum(axis=1), axis=0)
+elut19_t10_qtn_df = qnorm.quantile_normalize(elut19_t10_df, axis=0)
+
+elut20_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep2.elut", sep='\t')
+elut20_df = elut20_df.set_index('Unnamed: 0')
+elut20_t10_df = elut20_df[elut20_df.sum(axis=1) > 10]
+elut20_t10_rwn_df = elut20_t10_df.div(elut20_t10_df.max(axis=1), axis=0)
+elut20_t10_rsm_df = elut20_t10_df.div(elut20_t10_df.sum(axis=1), axis=0)
+elut20_t10_qtn_df = qnorm.quantile_normalize(elut20_t10_df, axis=0)
+
+elut21_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep3.elut", sep='\t')
+elut21_df = elut21_df.set_index('Unnamed: 0')
+elut21_t10_df = elut21_df[elut21_df.sum(axis=1) > 10]
+elut21_t10_rwn_df = elut21_t10_df.div(elut21_t10_df.max(axis=1), axis=0)
+elut21_t10_rsm_df = elut21_t10_df.div(elut21_t10_df.sum(axis=1), axis=0)
+elut21_t10_qtn_df = qnorm.quantile_normalize(elut21_t10_df, axis=0)
+
+elut22_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Larance_2016_PT3281S1.elut", sep='\t')
+elut22_df = elut22_df.set_index('Unnamed: 0')
+elut22_t10_df = elut22_df[elut22_df.sum(axis=1) > 10]
+elut22_t10_rwn_df = elut22_t10_df.div(elut22_t10_df.max(axis=1), axis=0)
+elut22_t10_rsm_df = elut22_t10_df.div(elut22_t10_df.sum(axis=1), axis=0)
+elut22_t10_qtn_df = qnorm.quantile_normalize(elut22_t10_df, axis=0)
+
+elut23_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Larance_2016_PT3441S1.elut", sep='\t')
+elut23_df = elut23_df.set_index('Unnamed: 0')
+elut23_t10_df = elut23_df[elut23_df.sum(axis=1) > 10]
+elut23_t10_rwn_df = elut23_t10_df.div(elut23_t10_df.max(axis=1), axis=0)
+elut23_t10_rsm_df = elut23_t10_df.div(elut23_t10_df.sum(axis=1), axis=0)
+elut23_t10_qtn_df = qnorm.quantile_normalize(elut23_t10_df, axis=0)
+
+elut24_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Larance_2016_PT3442S1.elut", sep='\t')
+elut24_df = elut24_df.set_index('Unnamed: 0')
+elut24_t10_df = elut24_df[elut24_df.sum(axis=1) > 10]
+elut24_t10_rwn_df = elut24_t10_df.div(elut24_t10_df.max(axis=1), axis=0)
+elut24_t10_rsm_df = elut24_t10_df.div(elut24_t10_df.sum(axis=1), axis=0)
+elut24_t10_qtn_df = qnorm.quantile_normalize(elut24_t10_df, axis=0)
+
+elut25_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Larance_2016_PT3701S1.elut", sep='\t')
+elut25_df = elut25_df.set_index('Unnamed: 0')
+elut25_t10_df = elut25_df[elut25_df.sum(axis=1) > 10]
+elut25_t10_rwn_df = elut25_t10_df.div(elut25_t10_df.max(axis=1), axis=0)
+elut25_t10_rsm_df = elut25_t10_df.div(elut25_t10_df.sum(axis=1), axis=0)
+elut25_t10_qtn_df = qnorm.quantile_normalize(elut25_t10_df, axis=0)
+
+elut26_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Larance_2016_PTSS3801.elut", sep='\t')
+elut26_df = elut26_df.set_index('Unnamed: 0')
+elut26_t10_df = elut26_df[elut26_df.sum(axis=1) > 10]
+elut26_t10_rwn_df = elut26_t10_df.div(elut26_t10_df.max(axis=1), axis=0)
+elut26_t10_rsm_df = elut26_t10_df.div(elut26_t10_df.sum(axis=1), axis=0)
+elut26_t10_qtn_df = qnorm.quantile_normalize(elut26_t10_df, axis=0)
+
+elut27_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Larance_2016_PTSS3802.elut", sep='\t')
+elut27_df = elut27_df.set_index('Unnamed: 0')
+elut27_t10_df = elut27_df[elut27_df.sum(axis=1) > 10]
+elut27_t10_rwn_df = elut27_t10_df.div(elut27_t10_df.max(axis=1), axis=0)
+elut27_t10_rsm_df = elut27_t10_df.div(elut27_t10_df.sum(axis=1), axis=0)
+elut27_t10_qtn_df = qnorm.quantile_normalize(elut27_t10_df, axis=0)
+
+elut28_df = pd.read_csv(DATADIR_ELUT + "HEK_293_T_cells_SEC_Mallam_2019_C1.elut", sep='\t')
+elut28_df = elut28_df.set_index('Unnamed: 0')
+elut28_t10_df = elut28_df[elut28_df.sum(axis=1) > 10]
+elut28_t10_rwn_df = elut28_t10_df.div(elut28_t10_df.max(axis=1), axis=0)
+elut28_t10_rsm_df = elut28_t10_df.div(elut28_t10_df.sum(axis=1), axis=0)
+elut28_t10_qtn_df = qnorm.quantile_normalize(elut28_t10_df, axis=0)
+
+elut29_df = pd.read_csv(DATADIR_ELUT + "HEK_293_T_cells_SEC_Mallam_2019_C2.elut", sep='\t')
+elut29_df = elut29_df.set_index('Unnamed: 0')
+elut29_t10_df = elut29_df[elut29_df.sum(axis=1) > 10]
+elut29_t10_rwn_df = elut29_t10_df.div(elut29_t10_df.max(axis=1), axis=0)
+elut29_t10_rsm_df = elut29_t10_df.div(elut29_t10_df.sum(axis=1), axis=0)
+elut29_t10_qtn_df = qnorm.quantile_normalize(elut29_t10_df, axis=0)
+
+elut30_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_IEX_Moutaoufik_2019_R1.elut", sep='\t')
+elut30_df = elut30_df.set_index('Unnamed: 0')
+elut30_t10_df = elut30_df[elut30_df.sum(axis=1) > 10]
+elut30_t10_rwn_df = elut30_t10_df.div(elut30_t10_df.max(axis=1), axis=0)
+elut30_t10_rsm_df = elut30_t10_df.div(elut30_t10_df.sum(axis=1), axis=0)
+elut30_t10_qtn_df = qnorm.quantile_normalize(elut30_t10_df, axis=0)
+
+elut31_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_IEX_Moutaoufik_2019_R2.elut", sep='\t')
+elut31_df = elut31_df.set_index('Unnamed: 0')
+elut31_t10_df = elut31_df[elut31_df.sum(axis=1) > 10]
+elut31_t10_rwn_df = elut31_t10_df.div(elut31_t10_df.max(axis=1), axis=0)
+elut31_t10_rsm_df = elut31_t10_df.div(elut31_t10_df.sum(axis=1), axis=0)
+elut31_t10_qtn_df = qnorm.quantile_normalize(elut31_t10_df, axis=0)
+
+elut32_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_IEX_Moutafouik_2019_2_R1.elut", sep='\t')
+elut32_df = elut32_df.set_index('Unnamed: 0')
+elut32_t10_df = elut32_df[elut32_df.sum(axis=1) > 10]
+elut32_t10_rwn_df = elut32_t10_df.div(elut32_t10_df.max(axis=1), axis=0)
+elut32_t10_rsm_df = elut32_t10_df.div(elut32_t10_df.sum(axis=1), axis=0)
+elut32_t10_qtn_df = qnorm.quantile_normalize(elut32_t10_df, axis=0)
+
+elut33_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_IEX_Moutafouik_2019_2_R2.elut", sep='\t')
+elut33_df = elut33_df.set_index('Unnamed: 0')
+elut33_t10_df = elut33_df[elut33_df.sum(axis=1) > 10]
+elut33_t10_rwn_df = elut33_t10_df.div(elut33_t10_df.max(axis=1), axis=0)
+elut33_t10_rsm_df = elut33_t10_df.div(elut33_t10_df.sum(axis=1), axis=0)
+elut33_t10_qtn_df = qnorm.quantile_normalize(elut33_t10_df, axis=0)
+
+elut34_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutafouik_2019_R1.elut", sep='\t')
+elut34_df = elut34_df.set_index('Unnamed: 0')
+elut34_t10_df = elut34_df[elut34_df.sum(axis=1) > 10]
+elut34_t10_rwn_df = elut34_t10_df.div(elut34_t10_df.max(axis=1), axis=0)
+elut34_t10_rsm_df = elut34_t10_df.div(elut34_t10_df.sum(axis=1), axis=0)
+elut34_t10_qtn_df = qnorm.quantile_normalize(elut34_t10_df, axis=0)
+
+elut35_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutafouik_2019_R2.elut", sep='\t')
+elut35_df = elut35_df.set_index('Unnamed: 0')
+elut35_t10_df = elut35_df[elut35_df.sum(axis=1) > 10]
+elut35_t10_rwn_df = elut35_t10_df.div(elut35_t10_df.max(axis=1), axis=0)
+elut35_t10_rsm_df = elut35_t10_df.div(elut35_t10_df.sum(axis=1), axis=0)
+elut35_t10_qtn_df = qnorm.quantile_normalize(elut35_t10_df, axis=0)
+
+elut36_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutafouik_2019_2_R1.elut", sep='\t')
+elut36_df = elut36_df.set_index('Unnamed: 0')
+elut36_t10_df = elut36_df[elut36_df.sum(axis=1) > 10]
+elut36_t10_rwn_df = elut36_t10_df.div(elut36_t10_df.max(axis=1), axis=0)
+elut36_t10_rsm_df = elut36_t10_df.div(elut36_t10_df.sum(axis=1), axis=0)
+elut36_t10_qtn_df = qnorm.quantile_normalize(elut36_t10_df, axis=0)
+
+elut37_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutafouik_2019_2_R2.elut", sep='\t')
+elut37_df = elut37_df.set_index('Unnamed: 0')
+elut37_t10_df = elut37_df[elut37_df.sum(axis=1) > 10]
+elut37_t10_rwn_df = elut37_t10_df.div(elut37_t10_df.max(axis=1), axis=0)
+elut37_t10_rsm_df = elut37_t10_df.div(elut37_t10_df.sum(axis=1), axis=0)
+elut37_t10_qtn_df = qnorm.quantile_normalize(elut37_t10_df, axis=0)
 
 elut_list = [elut1_t10_df, elut2_t10_df, elut3_t10_df, elut4_t10_df,
              elut5_t10_df, elut6_t10_df, elut7_t10_df, elut8_t10_df,
-             elut9_t10_df, elut10_t10_df, elut11_t10_df, elut12_t10_df]
+             elut9_t10_df, elut10_t10_df, elut11_t10_df, elut12_t10_df,
+             elut13_t10_df, elut14_t10_df, elut15_t10_df, elut16_t10_df,
+             elut14_t10_df, elut15_t10_df, elut16_t10_df, elut17_t10_df,
+             elut18_t10_df, elut19_t10_df, elut20_t10_df, elut21_t10_df,
+             elut22_t10_df, elut23_t10_df, elut24_t10_df, elut25_t10_df,
+             elut26_t10_df, elut27_t10_df, elut28_t10_df, elut29_t10_df,
+             elut30_t10_df, elut31_t10_df, elut32_t10_df, elut33_t10_df,
+             elut35_t10_df, elut36_t10_df, elut37_t10_df]
 '''
 elut_list = [elut1_t10_rwn_df, elut2_t10_rwn_df, elut3_t10_rwn_df,
              elut4_t10_rwn_df, elut5_t10_rwn_df]
@@ -387,44 +567,56 @@ class siameseNet(nn.Module):
         #   Size: (num_fractions - kernel_size + 2*padding / stride) + 1)
 
         self.cnn1 = nn.Sequential(
-                nn.Conv1d(in_channels=1, out_channels=4,
+                nn.Conv1d(in_channels=1, out_channels=2,
                           kernel_size=4, stride=1, padding=1),
                 nn.MaxPool1d(kernel_size=3, stride=2),
                 nn.ReLU(inplace=True),
 
-                nn.Conv1d(in_channels=4, out_channels=8,
+                nn.Conv1d(in_channels=2, out_channels=4,
                           kernel_size=5, stride=1, padding=1),
                 nn.MaxPool1d(kernel_size=2, stride=2),
                 nn.ReLU(inplace=True)
         )
 
-        self.rnn = nn.LSTM(input_size=8, hidden_size=hidden_size, num_layers = 1,
+        self.rnn = nn.LSTM(input_size=4, hidden_size=hidden_size, num_layers = 1,
                            bidirectional=True, batch_first=True)
 
 
         self.cnn2 = nn.Sequential(
-                nn.ConvTranspose1d(in_channels=2*hidden_size, out_channels=8,
+                nn.ConvTranspose1d(in_channels=2*hidden_size, out_channels=4,
                                    kernel_size=3, stride=1, padding=1),
                 nn.ReLU(inplace=True),
 
-                nn.ConvTranspose1d(in_channels=8, out_channels=4,
+                nn.ConvTranspose1d(in_channels=4, out_channels=2,
                                    kernel_size=3, stride=1, padding=1),
                 nn.ReLU(inplace=True),
 
-                nn.ConvTranspose1d(in_channels=4, out_channels=1,
+                nn.ConvTranspose1d(in_channels=2, out_channels=1,
                                    kernel_size=3, stride=1, padding=1),
 
         )
-        self.fc = nn.Sequential(
+        self.fc1 = nn.Sequential(
 
-                nn.Linear(31, 64),
+                nn.Linear(30, 64),
                 nn.ReLU(inplace=True),
 
                 nn.Linear(64, 32),
                 nn.ReLU(inplace=True),
 
-                nn.Linear(32, 2)
+                nn.Linear(32, 16),
+                nn.ReLU(inplace=True)
         )
+
+
+        self.fc2 = nn.Sequential(
+
+                nn.Linear(16, 4),
+                nn.ReLU(inplace=True),
+
+                nn.Linear(4, 2)
+
+        )
+
 
     # Function called on both images, x, to determine their similarity
     def forward_once(self, x, pcc):
@@ -453,12 +645,20 @@ class siameseNet(nn.Module):
         y = y.view(y.size()[0], -1)
 
         # Prepare Pearson input for network
-        pcc = pcc.view(-1, 1).expand(y.size(0), 1)
-        y = torch.cat((y, pcc), dim=1)
+        #pcc = pcc.view(-1, 1).expand(y.size(0), 1)
+        #y = torch.cat((y, pcc), dim=1)
 
         # Apply fully connected layer
         # Potentiall add Pearson correlation coefficient here
-        y = self.fc(y)
+        y = self.fc1(y)
+
+        # Prepare Pearson input for network
+        #pcc = pcc.view(-1, 1).expand(y.size(0), 1)
+        #y = torch.cat((y, pcc), dim=1)
+
+        y = self.fc2(y)
+
+
         return y
 
     # Main forward function

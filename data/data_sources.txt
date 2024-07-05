@@ -1,6 +1,0 @@
-Connelly 2018 10.1002/pmic.201700427 Homo sapiens
-Kirkwood 2013 10.1074/mcp.M113.032367 Homo sapiens
-Mallam 2019 10.1016/j.celrep.2019.09.060 Homo sapiens
-Moutaoufik 2019 10.1016/j.isci.2019.08.057 Homo sapiens
-Scott 2017 10.15252/msb.20167067 Homo sapiens
-Skinnider 2018 10.1101/351247 Mus musculus
