@@ -38,9 +38,9 @@ __FAST_VALID_TEST__ = False
 DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
 
-NUM_EPOCHS = 25
-BATCH_SIZE = 32
-LEARN_RATE = 1e-3
+NUM_EPOCHS = 50
+BATCH_SIZE = 128
+LEARN_RATE = 1e-4
 NUM_THREAD = 2
 SUBSET_SIZE = 1000 # For __FAST_VALID_TEST__
 TEMPERATURE = 25.0 # For cosine similarity contrastive loss
@@ -371,6 +371,8 @@ elut37_t10_rwn_df = elut37_t10_df.div(elut37_t10_df.max(axis=1), axis=0)
 elut37_t10_rsm_df = elut37_t10_df.div(elut37_t10_df.sum(axis=1), axis=0)
 elut37_t10_qtn_df = qnorm.quantile_normalize(elut37_t10_df, axis=0)
 
+
+'''
 elut_list = [elut1_t10_df, elut2_t10_df, elut3_t10_df, elut4_t10_df,
              elut5_t10_df, elut6_t10_df, elut7_t10_df, elut8_t10_df,
              elut9_t10_df, elut10_t10_df, elut11_t10_df, elut12_t10_df,
@@ -381,24 +383,42 @@ elut_list = [elut1_t10_df, elut2_t10_df, elut3_t10_df, elut4_t10_df,
              elut26_t10_df, elut27_t10_df, elut28_t10_df, elut29_t10_df,
              elut30_t10_df, elut31_t10_df, elut32_t10_df, elut33_t10_df,
              elut35_t10_df, elut36_t10_df, elut37_t10_df]
-'''
-elut_list = [elut1_t10_rwn_df, elut2_t10_rwn_df, elut3_t10_rwn_df,
-             elut4_t10_rwn_df, elut5_t10_rwn_df]
 elut_list = [elut1_t10_rwn_df, elut2_t10_rwn_df, elut3_t10_rwn_df,
              elut4_t10_rwn_df, elut5_t10_rwn_df, elut4_t10_rwn_df,
              elut5_t10_rwn_df, elut6_t10_rwn_df, elut7_t10_rwn_df,
              elut8_t10_rwn_df, elut9_t10_rwn_df, elut10_t10_rwn_df,
              elut11_t10_rwn_df, elut12_t10_rwn_df]
+'''
 elut_list = [elut1_t10_qtn_df, elut2_t10_qtn_df, elut3_t10_qtn_df,
              elut4_t10_qtn_df, elut5_t10_qtn_df, elut4_t10_qtn_df,
              elut5_t10_qtn_df, elut6_t10_qtn_df, elut7_t10_qtn_df,
              elut8_t10_qtn_df, elut9_t10_qtn_df, elut10_t10_qtn_df,
-             elut11_t10_qtn_df, elut12_t10_qtn_df]
+             elut11_t10_qtn_df, elut12_t10_qtn_df, elut13_t10_qtn_df,
+             elut14_t10_qtn_df, elut15_t10_qtn_df, elut16_t10_qtn_df,
+             elut17_t10_qtn_df, elut18_t10_qtn_df, elut19_t10_qtn_df,
+             elut20_t10_qtn_df, elut21_t10_qtn_df, elut22_t10_qtn_df,
+             elut23_t10_qtn_df, elut24_t10_qtn_df, elut25_t10_qtn_df,
+             elut26_t10_qtn_df, elut27_t10_qtn_df, elut28_t10_qtn_df,
+             elut29_t10_qtn_df, elut30_t10_qtn_df, elut31_t10_qtn_df,
+             elut32_t10_qtn_df, elut33_t10_qtn_df, elut34_t10_qtn_df,
+             elut35_t10_qtn_df, elut36_t10_qtn_df, elut37_t10_qtn_df]
+'''
+elut_list = [elut1_t10_qtn_df, elut2_t10_qtn_df, elut3_t10_qtn_df,
+             elut4_t10_qtn_df, elut5_t10_qtn_df]
+            
 elut_list = [elut1_t10_rsm_df, elut2_t10_rsm_df, elut3_t10_rsm_df,
              elut4_t10_rsm_df, elut5_t10_rsm_df, elut4_t10_rsm_df,
              elut5_t10_rsm_df, elut6_t10_rsm_df, elut7_t10_rsm_df,
              elut8_t10_rsm_df, elut9_t10_rsm_df, elut10_t10_rsm_df,
-             elut11_t10_rsm_df, elut12_t10_rsm_df]
+             elut11_t10_rsm_df, elut12_t10_rsm_df, elut13_t10_rsm_df,
+             elut14_t10_rsm_df, elut15_t10_rsm_df, elut16_t10_rsm_df,
+             elut17_t10_rsm_df, elut18_t10_rsm_df, elut19_t10_rsm_df,
+             elut20_t10_rsm_df, elut21_t10_rsm_df, elut22_t10_rsm_df,
+             elut23_t10_rsm_df, elut24_t10_rsm_df, elut25_t10_rsm_df,
+             elut26_t10_rsm_df, elut27_t10_rsm_df, elut28_t10_rsm_df,
+             elut29_t10_rsm_df, elut30_t10_rsm_df, elut31_t10_rsm_df,
+             elut32_t10_rsm_df, elut33_t10_rsm_df, elut34_t10_rsm_df,
+             elut35_t10_rsm_df, elut36_t10_rsm_df, elut37_t10_rsm_df]
 '''
 print("Elution data obtained. Now preparing ...")
 
@@ -458,9 +478,8 @@ def plot_loss(iteration, loss, color, xaxis, title, filename=None):
     plt.clf()
     plt.cla()
 
-
-
-
+def euclidean_to_confidence(euclidean_distance):
+    return 1 / (1 + euclidean_distance)
 
 
 # Wrap elution pair data into PyTorch dataset
@@ -567,55 +586,67 @@ class siameseNet(nn.Module):
         #   Size: (num_fractions - kernel_size + 2*padding / stride) + 1)
 
         self.cnn1 = nn.Sequential(
-                nn.Conv1d(in_channels=1, out_channels=2,
-                          kernel_size=4, stride=1, padding=1),
+                nn.Conv1d(in_channels=1, out_channels=4,
+                          kernel_size=3, stride=1, padding=1),
                 nn.MaxPool1d(kernel_size=3, stride=2),
-                nn.ReLU(inplace=True),
+                nn.LeakyReLU(inplace=True),
 
-                nn.Conv1d(in_channels=2, out_channels=4,
-                          kernel_size=5, stride=1, padding=1),
-                nn.MaxPool1d(kernel_size=2, stride=2),
-                nn.ReLU(inplace=True)
+                nn.Conv1d(in_channels=4, out_channels=16,
+                          kernel_size=3, stride=1, padding=1),
+                nn.MaxPool1d(kernel_size=3, stride=2),
+                nn.LeakyReLU(inplace=True),
+
+                nn.Conv1d(in_channels=16, out_channels=32,
+                          kernel_size=3, stride=1, padding=1),
+                nn.MaxPool1d(kernel_size=3, stride=2),
+                nn.LeakyReLU(inplace=True)
         )
 
-        self.rnn = nn.LSTM(input_size=4, hidden_size=hidden_size, num_layers = 1,
+        self.rnn = nn.LSTM(input_size=8, hidden_size=hidden_size, num_layers = 2,
                            bidirectional=True, batch_first=True)
 
 
+        self.tns = nn.TransformerEncoder(
+                nn.TransformerEncoderLayer(d_model=32,
+                                           nhead=1, dim_feedforward=2048,
+                                           batch_first=True),
+                num_layers=16)
+
+        self.emb = nn.Embedding(32, 1)
+
         self.cnn2 = nn.Sequential(
-                nn.ConvTranspose1d(in_channels=2*hidden_size, out_channels=4,
+                nn.ConvTranspose1d(in_channels=32, out_channels=16,
                                    kernel_size=3, stride=1, padding=1),
-                nn.ReLU(inplace=True),
+                nn.LeakyReLU(inplace=True),
 
-                nn.ConvTranspose1d(in_channels=4, out_channels=2,
+                nn.ConvTranspose1d(in_channels=16, out_channels=4,
                                    kernel_size=3, stride=1, padding=1),
-                nn.ReLU(inplace=True),
+                nn.LeakyReLU(inplace=True),
 
-                nn.ConvTranspose1d(in_channels=2, out_channels=1,
+                nn.ConvTranspose1d(in_channels=4, out_channels=1,
                                    kernel_size=3, stride=1, padding=1),
-
+                nn.LeakyReLU(inplace=True)
         )
         self.fc1 = nn.Sequential(
 
-                nn.Linear(30, 64),
-                nn.ReLU(inplace=True),
+                nn.Linear(16, 64),
+                nn.LeakyReLU(inplace=True),
 
                 nn.Linear(64, 32),
-                nn.ReLU(inplace=True),
+                nn.LeakyReLU(inplace=True),
 
-                nn.Linear(32, 16),
-                nn.ReLU(inplace=True)
+                nn.Linear(32, 2)
+                #nn.LeakyReLU(inplace=True)
         )
 
 
         self.fc2 = nn.Sequential(
 
-                nn.Linear(16, 4),
-                nn.ReLU(inplace=True),
-
-                nn.Linear(4, 2)
+                nn.Linear(6, 2),
 
         )
+
+        self.sig = nn.Sigmoid()
 
 
     # Function called on both images, x, to determine their similarity
@@ -630,10 +661,10 @@ class siameseNet(nn.Module):
         #y = self.tns(y)
 
         # Apply bidirectional recurrency
-        y, _ = self.rnn(y)
+        #y, _ = self.rnn(y)
 
         # Apply transformer layer
-        #y = self.tns(y)
+        y = self.tns(y)
 
         # Prepare for convolutional decoding
         y = y.permute(0, 2, 1)
@@ -645,8 +676,8 @@ class siameseNet(nn.Module):
         y = y.view(y.size()[0], -1)
 
         # Prepare Pearson input for network
-        #pcc = pcc.view(-1, 1).expand(y.size(0), 1)
-        #y = torch.cat((y, pcc), dim=1)
+        pcc = pcc.view(-1, 1).expand(y.size(0), 1)
+        y = torch.cat((y, pcc), dim=1)
 
         # Apply fully connected layer
         # Potentiall add Pearson correlation coefficient here
@@ -656,9 +687,7 @@ class siameseNet(nn.Module):
         #pcc = pcc.view(-1, 1).expand(y.size(0), 1)
         #y = torch.cat((y, pcc), dim=1)
 
-        y = self.fc2(y)
-
-
+        #y = self.fc2(y)
         return y
 
     # Main forward function
@@ -675,7 +704,6 @@ class contrastiveLossEuclidean(torch.nn.Module):
         self.margin = margin
 
     # Contrastive loss calculation
-    #   CL = mean( (1-y)*d^2 + y*
     def forward(self, output1, output2, label):
         euclidean_dist = F.pairwise_distance(output1, output2, keepdim=True)
         loss_contrastive = torch.mean((1-label) * torch.pow(euclidean_dist, 2) +
@@ -698,6 +726,7 @@ class contrastiveLossCosineSimilarity(nn.Module):
         loss_contrastive = torch.mean((1-label) * torch.pow(cos_sim_t, 2) +
                                       (label) * torch.pow(torch.clamp(self.margin - cos_sim_t, min=0.0), 2))
         return loss_contrastive
+
 
 print("Network defined. Wrapping elution datasets in DataLoaders ...")
 # Load training dataset
@@ -922,6 +951,9 @@ if trainNet:
                 loss_test_contrastive = criterion(output1, output2, test_label)
                 test_loss += loss_test_contrastive
 
+                if test_i % 5 == 0:
+                    print(f"Now running model on test set ... {test_i * 100 / len(test_dataloader):.4f} %", end='\r')
+
         # Calculate average loss on test dataset
         avg_test_loss = test_loss / len(test_dataloader)
         if avg_test_loss < min_avg_test_loss:
@@ -948,8 +980,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 # TEST EUCLIDEAN
-# Test only positive ppis
-test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=[elut1_t10_qtn_df],
+test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
                                                    pos_ppis=test_pos_ppis,
                                                    neg_ppis=[],
                                                    transform=True)
@@ -970,7 +1001,6 @@ else:
 # Construct a list of euclidean distances between two positive protein pairs
 # We want these to be smaller, as the network should recognize their similarity
 pos_ppi_euclidean_dist_list = []
-print("Calculating Euclidean distances for positive pairwise interactions")
 for i, (pos_elut0, pos_elut1, pos_label) in enumerate(test_pos_dataloader):
     pccListPos = []
 
@@ -987,9 +1017,13 @@ for i, (pos_elut0, pos_elut1, pos_label) in enumerate(test_pos_dataloader):
 
     euclidean_dist = F.pairwise_distance(output1, output2)
     pos_ppi_euclidean_dist_list.append(euclidean_dist.item())
+    
+    if i % 5 == 0:
+        print(f"Calculating Euclidean distances for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
+
 
 # Test only negative ppis
-test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=[elut1_t10_qtn_df],
+test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
                                                    pos_ppis=[],
                                                    neg_ppis=test_neg_ppis,
                                                    transform=True)
@@ -1010,7 +1044,7 @@ else:
 # Construct a list of euclidean distances between two negative protein pairs
 # We want these to be larger, as the network should recognize their dissimilarity
 neg_ppi_euclidean_dist_list = []
-print("Calculating Euclidean distances for negative pairwise interactions")
+
 for i, (neg_elut0, neg_elut1, neg_label) in enumerate(test_neg_dataloader):
     pccListNeg = []
 
@@ -1024,8 +1058,8 @@ for i, (neg_elut0, neg_elut1, neg_label) in enumerate(test_neg_dataloader):
     euclidean_dist = F.pairwise_distance(output1, output2)
     neg_ppi_euclidean_dist_list.append(euclidean_dist.item())
 
-    if i % 10 == 0:
-        print(f"{i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
+    if i % 5 == 0:
+        print(f"Calculating Euclidean distances for negative pairwise interactions ... {i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
 
 
 # Plot the PDF of the euclidean distance between positive and negative protein pairs
@@ -1062,21 +1096,24 @@ pylab.cla()
 # TEST PEARSON
 # Obtain Pearson correlation between protein pairs
 pos_ppi_pearson_list = []
-print("Calculating Pearson scores for positive pairwise interactions")
 for elut0, elut1, label in test_pos_dataloader:
     prot0, prot1 = elut0[0], elut1[0]
     elut0, elut1 = elut0[1], elut1[1]
     pos_ppi_pearson_list.append(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
 
+    if i % 5 == 0:
+        print(f"Calculating Pearson scores for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
+
+
 neg_ppi_pearson_list = []
-print("Calculating Pearson scores for negative pairwise interactions")
 for i, (elut0, elut1, label) in enumerate(test_neg_dataloader):
     prot0, prot1 = elut0[0], elut1[0]
     elut0, elut1 = elut0[1], elut1[1]
     neg_ppi_pearson_list.append(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
 
-    if i % 10 == 0:
-        print(f"{i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
+    if i % 5 == 0:
+        print(f"Calculating Pearson scores for negative pairwise interactions ... {i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
+
 
 
 
@@ -1120,6 +1157,7 @@ df_pearson_euclidean = df_pearson_euclidean.melt(id_vars=['Label', 'Euclidean Di
 # Plot the pearson scores for positive PPIs against the euclidean score
 #   Euclidean distance should be small, preferably as close to 0 as possible
 scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list, s=10)
+scat1.set_xlim(-1, 12)
 fig_scat1 = scat1.get_figure()
 fig_scat1.savefig("pearson_vs_euc_scatter.png")
 fig_scat1.clf()
@@ -1128,9 +1166,13 @@ fig_scat1.clf()
 #   We want to make the glob near (0, 0) larger
 kde1 = sns.kdeplot(data=df_pearson_euclidean, x='Euclidean Distance', y='Pearson Score',
                    common_norm=False, hue='Label', levels=15)
+kde1.set_xlim(-1, 12)
 fig_kde1 = kde1.get_figure()
 fig_kde1.savefig("pearson_vs_euc_kde.png")
 fig_kde1.clf()
+
+# Plot precision vs recall
+
 
 
 
