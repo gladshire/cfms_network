@@ -45,7 +45,7 @@ NUM_THREAD = 2
 SUBSET_SIZE = 1000 # For __FAST_VALID_TEST__
 TEMPERATURE = 25.0 # For cosine similarity contrastive loss
 MOMENTUM = 0
-
+SENSITIVITY = 3
 SAMPLE_RATE = 10 # How many batches between samples (for loss curve)
 
   
@@ -478,8 +478,12 @@ def plot_loss(iteration, loss, color, xaxis, title, filename=None):
     plt.clf()
     plt.cla()
 
-def euclidean_to_confidence(euclidean_distance):
-    return 1 / (1 + euclidean_distance)
+# Custom function for converting Euclidean distance to confidence score, 
+# where s is a parameter making the score more sensitive to smaller distances
+def euclidean_to_confidence(euc_dist, max_euc_dist, s):
+    #return 1 / (1 + euclidean_distance)
+    confidence = (((max_euc_dist + 1) - euc_dist)**s - 1) / ((max_euc_dist + 1)**s - 1)
+    return confidence
 
 
 # Wrap elution pair data into PyTorch dataset
@@ -1001,26 +1005,39 @@ else:
 # Construct a list of euclidean distances between two positive protein pairs
 # We want these to be smaller, as the network should recognize their similarity
 pos_ppi_euclidean_dist_list = []
+pos_ppi_conf_output_file = open("pos_ppi_conf.txt", 'w')
 for i, (pos_elut0, pos_elut1, pos_label) in enumerate(test_pos_dataloader):
     pccListPos = []
 
     # Obtain protein IDs
     prot0, prot1 = pos_elut0[0], pos_elut1[0]
 
+    # Obtain Pearson correlation
     for pos_ppi0, pos_ppi1 in zip(pos_elut0[1], pos_elut1[1]):
          pccListPos.append(scipy.stats.pearsonr(pos_ppi0[0], pos_ppi1[0])[0])
     pcc = torch.tensor(pccListPos, dtype=torch.float32).cuda()
 
+    # Obtain elution traces
     pos_elut0, pos_elut1 = pos_elut0[1], pos_elut1[1]
 
+    # Run model on data
     output1, output2 = net(pos_elut0.cuda(), pos_elut1.cuda(), pcc)
 
+    # Get Euclidean distance b/t model outputs
     euclidean_dist = F.pairwise_distance(output1, output2)
+
+    # Get confidence score of similarity based on Euclidean distance
+    confidence = euclidean_to_confidence(euclidean_dist, 10.0, SENSITIVITY)
+
+    # Write prediction to text file, with following line-wise format
+    #   prot1:prot2 euc_dist confidence label
+    #pos_ppi_conf_output_file.write(str(prot0) + ":" + str(prot1) + f"\t{euclidean_dist.item():.4f}\t{pccListPos[0]:.4f}\t{confidence:.4f}\n")
+
     pos_ppi_euclidean_dist_list.append(euclidean_dist.item())
     
     if i % 5 == 0:
         print(f"Calculating Euclidean distances for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
-
+pos_ppi_conf_output_file.close()
 
 # Test only negative ppis
 test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
@@ -1044,7 +1061,7 @@ else:
 # Construct a list of euclidean distances between two negative protein pairs
 # We want these to be larger, as the network should recognize their dissimilarity
 neg_ppi_euclidean_dist_list = []
-
+neg_ppi_conf_output_file = open("neg_ppi_conf.txt", 'w')
 for i, (neg_elut0, neg_elut1, neg_label) in enumerate(test_neg_dataloader):
     pccListNeg = []
 
@@ -1056,6 +1073,10 @@ for i, (neg_elut0, neg_elut1, neg_label) in enumerate(test_neg_dataloader):
     neg_elut0, neg_elut1 = neg_elut0[1], neg_elut1[1]
     output1, output2 = net(neg_elut0.cuda(), neg_elut1.cuda(), pcc)
     euclidean_dist = F.pairwise_distance(output1, output2)
+
+    confidence = euclidean_to_confidence(euclidean_dist, 10.0, SENSITIVITY)
+    #pos_ppi_conf_output_file.write(prot0 + ":" + prot1 + f"\t{euclidean_dist.item():.4f}\t{pccListNeg[0]:.4f}\t{confidence:.4f}\n")
+
     neg_ppi_euclidean_dist_list.append(euclidean_dist.item())
 
     if i % 5 == 0:
