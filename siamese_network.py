@@ -1006,6 +1006,7 @@ else:
 # We want these to be smaller, as the network should recognize their similarity
 pos_ppi_euclidean_dist_list = []
 pos_ppi_conf_output_file = open("pos_ppi_conf.txt", 'w')
+pos_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
 for i, (pos_elut0, pos_elut1, pos_label) in enumerate(test_pos_dataloader):
     pccListPos = []
 
@@ -1031,13 +1032,14 @@ for i, (pos_elut0, pos_elut1, pos_label) in enumerate(test_pos_dataloader):
 
     # Write prediction to text file, with following line-wise format
     #   prot1:prot2 euc_dist confidence label
-    #pos_ppi_conf_output_file.write(str(prot0) + ":" + str(prot1) + f"\t{euclidean_dist.item():.4f}\t{pccListPos[0]:.4f}\t{confidence:.4f}\n")
+    pos_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{pccListPos[0]:.4f}\t{confidence.item():.4f}\n")
 
     pos_ppi_euclidean_dist_list.append(euclidean_dist.item())
     
     if i % 5 == 0:
         print(f"Calculating Euclidean distances for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
 pos_ppi_conf_output_file.close()
+print("Calculating Euclidean distances for positive pairwise interactions ... done   ")
 
 # Test only negative ppis
 test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
@@ -1062,6 +1064,7 @@ else:
 # We want these to be larger, as the network should recognize their dissimilarity
 neg_ppi_euclidean_dist_list = []
 neg_ppi_conf_output_file = open("neg_ppi_conf.txt", 'w')
+neg_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
 for i, (neg_elut0, neg_elut1, neg_label) in enumerate(test_neg_dataloader):
     pccListNeg = []
 
@@ -1075,13 +1078,14 @@ for i, (neg_elut0, neg_elut1, neg_label) in enumerate(test_neg_dataloader):
     euclidean_dist = F.pairwise_distance(output1, output2)
 
     confidence = euclidean_to_confidence(euclidean_dist, 10.0, SENSITIVITY)
-    #pos_ppi_conf_output_file.write(prot0 + ":" + prot1 + f"\t{euclidean_dist.item():.4f}\t{pccListNeg[0]:.4f}\t{confidence:.4f}\n")
+    neg_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{pccListNeg[0]:.4f}\t{confidence.item():.4f}\n")
 
     neg_ppi_euclidean_dist_list.append(euclidean_dist.item())
 
     if i % 5 == 0:
         print(f"Calculating Euclidean distances for negative pairwise interactions ... {i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
-
+neg_ppi_conf_output_file.close()
+print("Calculating Euclidean distances for negative pairwise interactions ... done   ")
 
 # Plot the PDF of the euclidean distance between positive and negative protein pairs
 x = np.linspace(-5,20,1000)
