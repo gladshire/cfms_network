@@ -1,3 +1,6 @@
+# TODO: Get number of positive, negative examples
+
+
 import matplotlib.pyplot as plt
 import numpy as np
 import random
@@ -19,6 +22,7 @@ import torch.nn.functional as F
 import pylab
 import scipy.stats
 from scipy.stats import norm
+from sklearn.metrics import precision_recall_curve
 
 import pandas as pd
 import qnorm
@@ -402,10 +406,10 @@ elut_list = [elut1_t10_qtn_df, elut2_t10_qtn_df, elut3_t10_qtn_df,
              elut29_t10_qtn_df, elut30_t10_qtn_df, elut31_t10_qtn_df,
              elut32_t10_qtn_df, elut33_t10_qtn_df, elut34_t10_qtn_df,
              elut35_t10_qtn_df, elut36_t10_qtn_df, elut37_t10_qtn_df]
-'''
-elut_list = [elut1_t10_qtn_df, elut2_t10_qtn_df, elut3_t10_qtn_df,
-             elut4_t10_qtn_df, elut5_t10_qtn_df]
-            
+for elem in elut_list:
+    print(len(elem.index))
+
+'''           
 elut_list = [elut1_t10_rsm_df, elut2_t10_rsm_df, elut3_t10_rsm_df,
              elut4_t10_rsm_df, elut5_t10_rsm_df, elut4_t10_rsm_df,
              elut5_t10_rsm_df, elut6_t10_rsm_df, elut7_t10_rsm_df,
@@ -592,17 +596,17 @@ class siameseNet(nn.Module):
         self.cnn1 = nn.Sequential(
                 nn.Conv1d(in_channels=1, out_channels=4,
                           kernel_size=3, stride=1, padding=1),
-                nn.MaxPool1d(kernel_size=3, stride=2),
+                nn.BatchNorm1d(4),
                 nn.LeakyReLU(inplace=True),
 
                 nn.Conv1d(in_channels=4, out_channels=16,
                           kernel_size=3, stride=1, padding=1),
-                nn.MaxPool1d(kernel_size=3, stride=2),
+                nn.BatchNorm1d(16),
                 nn.LeakyReLU(inplace=True),
 
                 nn.Conv1d(in_channels=16, out_channels=32,
                           kernel_size=3, stride=1, padding=1),
-                nn.MaxPool1d(kernel_size=3, stride=2),
+                nn.BatchNorm1d(32),
                 nn.LeakyReLU(inplace=True)
         )
 
@@ -616,49 +620,34 @@ class siameseNet(nn.Module):
                                            batch_first=True),
                 num_layers=16)
 
-        self.emb = nn.Embedding(32, 1)
-
         self.cnn2 = nn.Sequential(
-                nn.ConvTranspose1d(in_channels=32, out_channels=16,
-                                   kernel_size=3, stride=1, padding=1),
+                nn.ConvTranspose1d(in_channels=32, out_channels=1,
+                                   kernel_size=1),
                 nn.LeakyReLU(inplace=True),
-
-                nn.ConvTranspose1d(in_channels=16, out_channels=4,
-                                   kernel_size=3, stride=1, padding=1),
-                nn.LeakyReLU(inplace=True),
-
-                nn.ConvTranspose1d(in_channels=4, out_channels=1,
-                                   kernel_size=3, stride=1, padding=1),
-                nn.LeakyReLU(inplace=True)
         )
         self.fc1 = nn.Sequential(
 
-                nn.Linear(16, 64),
+                nn.Linear(129, 256),
                 nn.LeakyReLU(inplace=True),
 
-                nn.Linear(64, 32),
+                nn.Linear(256, 128),
                 nn.LeakyReLU(inplace=True),
 
-                nn.Linear(32, 2)
-                #nn.LeakyReLU(inplace=True)
+                nn.Linear(128, 64),
+                nn.LeakyReLU(inplace=True),
+
+                nn.Linear(64, 16)
         )
-
-
-        self.fc2 = nn.Sequential(
-
-                nn.Linear(6, 2),
-
-        )
-
-        self.sig = nn.Sigmoid()
 
 
     # Function called on both images, x, to determine their similarity
     def forward_once(self, x, pcc):
         # Apply convolutional encoding
+        #print(x.shape)
         y = self.cnn1(x)
 
         # Prepare for recurrent layers
+        #print(y.shape)
         y = y.permute(0, 2, 1)
 
         # Apply transformer layer
@@ -668,12 +657,15 @@ class siameseNet(nn.Module):
         #y, _ = self.rnn(y)
 
         # Apply transformer layer
+        #print(y.shape)
         y = self.tns(y)
 
         # Prepare for convolutional decoding
+        #print(y.shape)
         y = y.permute(0, 2, 1)
 
         # Apply convolutional decoding
+        #print(y.shape)
         y = self.cnn2(y)
 
         # Flatten output to work with fully connected layer
@@ -691,7 +683,6 @@ class siameseNet(nn.Module):
         #pcc = pcc.view(-1, 1).expand(y.size(0), 1)
         #y = torch.cat((y, pcc), dim=1)
 
-        #y = self.fc2(y)
         return y
 
     # Main forward function
@@ -702,6 +693,7 @@ class siameseNet(nn.Module):
         return output1, output2
 
 # Define contrastive loss function, using Euclidean distance
+# TODO: Double check integrity of this function
 class contrastiveLossEuclidean(torch.nn.Module):
     def __init__(self, margin=2.0):
         super(contrastiveLossEuclidean, self).__init__()
@@ -767,6 +759,7 @@ else:
 # Instantiate network
 trainNet = True
 net = siameseNet().cuda()
+
 if len(sys.argv) != 1:
     model_to_load = sys.argv[1]
     net.load_state_dict(torch.load(model_to_load))
@@ -877,7 +870,7 @@ if trainNet:
             loss_train_contrastive.backward()
 
             # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=2.0)
+            #torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=2.0)
 
             # Optimize
             optimizer.step()
@@ -980,9 +973,6 @@ if trainNet:
 # Save the model weights
 torch.save(net.state_dict(), "./net_SGD.pt")
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-
 # TEST EUCLIDEAN
 test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
                                                    pos_ppis=test_pos_ppis,
@@ -1007,6 +997,8 @@ else:
 pos_ppi_euclidean_dist_list = []
 pos_ppi_conf_output_file = open("pos_ppi_conf.txt", 'w')
 pos_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
+pos_ppi_conf_list = []
+pos_ppi_lab_list = []
 for i, (pos_elut0, pos_elut1, pos_label) in enumerate(test_pos_dataloader):
     pccListPos = []
 
@@ -1035,6 +1027,8 @@ for i, (pos_elut0, pos_elut1, pos_label) in enumerate(test_pos_dataloader):
     pos_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{pccListPos[0]:.4f}\t{confidence.item():.4f}\n")
 
     pos_ppi_euclidean_dist_list.append(euclidean_dist.item())
+    pos_ppi_conf_list.append(confidence.item())
+    pos_ppi_lab_list.append(pos_label.item())
     
     if i % 5 == 0:
         print(f"Calculating Euclidean distances for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
@@ -1065,22 +1059,35 @@ else:
 neg_ppi_euclidean_dist_list = []
 neg_ppi_conf_output_file = open("neg_ppi_conf.txt", 'w')
 neg_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
+neg_ppi_conf_list = []
+neg_ppi_lab_list = []
 for i, (neg_elut0, neg_elut1, neg_label) in enumerate(test_neg_dataloader):
     pccListNeg = []
 
     # Obtain protein IDs
     prot0, prot1 = neg_elut0[0], neg_elut1[0]
+
+    # Obtain Pearson correlation
     for neg_ppi0, neg_ppi1 in zip(neg_elut0[1], neg_elut1[1]):
          pccListNeg.append(scipy.stats.pearsonr(neg_ppi0[0], neg_ppi1[0])[0])
     pcc = torch.tensor(pccListNeg, dtype=torch.float32).cuda()
+
+    # Obtain elution traces
     neg_elut0, neg_elut1 = neg_elut0[1], neg_elut1[1]
+
+    # Run model on data
     output1, output2 = net(neg_elut0.cuda(), neg_elut1.cuda(), pcc)
+
+    # Get Euclidean distance b/t model outputs
     euclidean_dist = F.pairwise_distance(output1, output2)
 
+    # Get confidence score of similarity based on Euclidean distance
     confidence = euclidean_to_confidence(euclidean_dist, 10.0, SENSITIVITY)
     neg_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{pccListNeg[0]:.4f}\t{confidence.item():.4f}\n")
 
     neg_ppi_euclidean_dist_list.append(euclidean_dist.item())
+    neg_ppi_conf_list.append(confidence.item())
+    neg_ppi_lab_list.append(neg_label.item())
 
     if i % 5 == 0:
         print(f"Calculating Euclidean distances for negative pairwise interactions ... {i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
@@ -1210,3 +1217,9 @@ with open("output.log", 'w') as outFile:
     outFile.write(f"Minimum Average Validation Loss: {min_avg_valid_loss:.4f}\n")
     outFile.write(f"Minimum Average Test Loss: {min_avg_test_loss:.4f}\n")
 outFile.close()
+
+# Generate precision vs recall curves for Euclidean, Pearson
+y_labels = pos_ppi_lab_list + neg_ppi_lab_list
+y_confs = pos_ppi_conf_list + neg_ppi_conf_list
+
+precision, recall, thresholds = precision-recall_curve(y_labels, y_confs)
