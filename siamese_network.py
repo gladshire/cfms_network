@@ -597,39 +597,37 @@ class siameseNet(nn.Module):
                 nn.Conv1d(in_channels=1, out_channels=4,
                           kernel_size=3, stride=1, padding=1),
                 nn.BatchNorm1d(4),
-                nn.LeakyReLU(inplace=True),
+                nn.ELU(inplace=True),
 
-                nn.Conv1d(in_channels=4, out_channels=16,
+                nn.Conv1d(in_channels=4, out_channels=8,
                           kernel_size=3, stride=1, padding=1),
-                nn.BatchNorm1d(16),
-                nn.LeakyReLU(inplace=True),
+                nn.BatchNorm1d(8),
+                nn.ELU(inplace=True),
         )
-
-        self.rnn = nn.LSTM(input_size=8, hidden_size=hidden_size, num_layers = 2,
-                           bidirectional=True, batch_first=True)
-
 
         self.tns = nn.TransformerEncoder(
-                nn.TransformerEncoderLayer(d_model=16,
+                nn.TransformerEncoderLayer(d_model=8,
                                            nhead=1, dim_feedforward=2048,
                                            batch_first=True),
-                num_layers=6)
+                num_layers=6
+        )
 
         self.cnn2 = nn.Sequential(
-                nn.ConvTranspose1d(in_channels=16, out_channels=1,
+                nn.ConvTranspose1d(in_channels=8, out_channels=1,
                                    kernel_size=1),
-                nn.LeakyReLU(inplace=True),
+                nn.ELU(inplace=True),
         )
+
         self.fc1 = nn.Sequential(
 
                 nn.Linear(129, 256),
-                nn.LeakyReLU(inplace=True),
+                nn.ELU(inplace=True),
 
                 nn.Linear(256, 128),
-                nn.LeakyReLU(inplace=True),
+                nn.ELU(inplace=True),
 
                 nn.Linear(128, 64),
-                nn.LeakyReLU(inplace=True),
+                nn.ELU(inplace=True),
 
                 nn.Linear(64, 16)
         )
