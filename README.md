@@ -1,6 +1,6 @@
 # CF-MS Network
 
-Pytorch model for predicting likelihood of protein-protein complex interaction given processed fractionation mass spectrometry intensity data.
+Pytorch model for predicting likelihood of protein-protein interaction given processed fractionation mass spectrometry intensity data.
 
 Written by Kevin Drew and Miles Woodcock-Girard for [Drew Lab](https://ksdrew.github.io/) at University of Illinois at Chicago.
 
