@@ -39,12 +39,14 @@ import os
 # Should not use this on actual runs
 __FAST_VALID_TEST__ = False
 
+SEED = 2809
+
 DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
 
 NUM_EPOCHS = 50
 BATCH_SIZE = 128
-LEARN_RATE = 1e-4
+LEARN_RATE = 1e-3
 NUM_THREAD = 2
 SUBSET_SIZE = 1000 # For __FAST_VALID_TEST__
 TEMPERATURE = 25.0 # For cosine similarity contrastive loss
@@ -406,8 +408,6 @@ elut_list = [elut1_t10_qtn_df, elut2_t10_qtn_df, elut3_t10_qtn_df,
              elut29_t10_qtn_df, elut30_t10_qtn_df, elut31_t10_qtn_df,
              elut32_t10_qtn_df, elut33_t10_qtn_df, elut34_t10_qtn_df,
              elut35_t10_qtn_df, elut36_t10_qtn_df, elut37_t10_qtn_df]
-for elem in elut_list:
-    print(len(elem.index))
 
 '''           
 elut_list = [elut1_t10_rsm_df, elut2_t10_rsm_df, elut3_t10_rsm_df,
@@ -603,11 +603,6 @@ class siameseNet(nn.Module):
                           kernel_size=3, stride=1, padding=1),
                 nn.BatchNorm1d(16),
                 nn.LeakyReLU(inplace=True),
-
-                nn.Conv1d(in_channels=16, out_channels=32,
-                          kernel_size=3, stride=1, padding=1),
-                nn.BatchNorm1d(32),
-                nn.LeakyReLU(inplace=True)
         )
 
         self.rnn = nn.LSTM(input_size=8, hidden_size=hidden_size, num_layers = 2,
@@ -615,13 +610,13 @@ class siameseNet(nn.Module):
 
 
         self.tns = nn.TransformerEncoder(
-                nn.TransformerEncoderLayer(d_model=32,
+                nn.TransformerEncoderLayer(d_model=16,
                                            nhead=1, dim_feedforward=2048,
                                            batch_first=True),
-                num_layers=16)
+                num_layers=6)
 
         self.cnn2 = nn.Sequential(
-                nn.ConvTranspose1d(in_channels=32, out_channels=1,
+                nn.ConvTranspose1d(in_channels=16, out_channels=1,
                                    kernel_size=1),
                 nn.LeakyReLU(inplace=True),
         )
@@ -785,18 +780,13 @@ criterion = contrastiveLossEuclidean()
 #   - SGD
 #     - Difficult, requires lots of hyper-parameter tuning to get working
 #     - Potentially generalizes far better. Should eventually use this one.
-#     - What doesn't work?
-#       > Without momentum
-#     - Which hyper-parameters (alone) tend to
-#       improve perforance?
-#       > Smaller learning rate
-#       > Adding momentum
-#       > Learning rate schedulers?
-#
-#
 
 #optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
 optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
+
+# Choose learning rate scheduler
+# miles: ReduceLROnPlateau works great dynamically, StepLR good for exploring ruggedness
+#        of loss topology
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, factor=0.1)
 #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.1)
 
@@ -821,7 +811,7 @@ def weights_init(m):
         torch.nn.init.xavier_uniform_(m.weight.data)
 
 
-#net.apply(weights_init)
+net.apply(weights_init)
 
 # Training loop
 #net.train()
@@ -834,6 +824,8 @@ if trainNet:
     print(f"Batch size: {BATCH_SIZE}")
     print(f"Learn rate: {LEARN_RATE}")
 
+
+    torch.manual_seed(SEED)
     for epoch in range(NUM_EPOCHS):
         print("\n=====================================")
         print(f"Epoch: {epoch+1} of {NUM_EPOCHS}")
@@ -868,9 +860,6 @@ if trainNet:
 
             # Perform backpropagation
             loss_train_contrastive.backward()
-
-            # Gradient clipping
-            #torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=2.0)
 
             # Optimize
             optimizer.step()
