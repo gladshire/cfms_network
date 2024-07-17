@@ -1,5 +1,11 @@
-# TODO: Get number of positive, negative examples
+# Co-fractionation 'Mass Spectrometry' Siamese Network
+# Written by Dr. Kevin Drew and Miles Woodcock-Girard
+# For Drew Lab at University of Illinois at Chicago
 
+# Goal: Develop some learned transformation that, when applied to the 1-D elution trace
+#       vectors for proteins A and B, returns vectors with a lower Euclidean Distance if
+#       A and B co-complex, and a higher Euclidean Distance if A and B do not co-complex.
+#       More specifically, to achieve better performance than Pearson correlation.
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,7 +28,6 @@ import torch.nn.functional as F
 import pylab
 import scipy.stats
 from scipy.stats import norm
-from sklearn.metrics import precision_recall_curve
 
 import pandas as pd
 import qnorm
@@ -35,37 +40,36 @@ import os
 
 
 
-# Use random subset samples of test/validation sets for speed
-# Should not use this on actual runs
+# Use random subset samples of test/validation sets for speed during debugging
 __FAST_VALID_TEST__ = False
 
+# Program parameters
 SEED = 2809
+NUM_THREAD = 2
+SUBSET_SIZE = 1000 # For if __FAST_VALID_TEST is True
+SAMPLE_RATE = 10 # How many batches between loss samples (for plotting loss curve)
 
+# Database directories
 DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
 
-NUM_EPOCHS = 50
+# Training parameters
+NUM_EPOCHS = 25
 BATCH_SIZE = 128
 LEARN_RATE = 1e-3
-NUM_THREAD = 2
-SUBSET_SIZE = 1000 # For __FAST_VALID_TEST__
-TEMPERATURE = 25.0 # For cosine similarity contrastive loss
 MOMENTUM = 0
-SENSITIVITY = 3
-SAMPLE_RATE = 10 # How many batches between samples (for loss curve)
 
+# Loss function parameters
+TEMPERATURE = 25.0 # For cosine similarity contrastive loss
+SENSITIVITY = 5 # For altering behavior of Euclidean distance to confidence function
+MARGIN = 5.0 # Minimum Euclidean separation for negative PPIs
   
-# Goal: to produce a network for discerning similarity in elution profiles between two proteins
-
 # Want to split proteins from complexes into datasets as partners. All proteins from a given complex must
 # be in the same set
-# How do produce positive, negative labels?
 # How many proteins shared between test and training set? C3, C2, C1 splits
-# C1 = when both proteins are in TRAIN and TEST
-# C2 = when one of the proteins is in TRAIN and TEST
-# C3 = when both proteins are in either TRAIN or TEST
-# Loss function: contrastive loss
-
+#   C1 = when both proteins are in TRAIN and TEST
+#   C2 = when one of the proteins is in TRAIN and TEST
+#   C3 = when both proteins are in either TRAIN or TEST
 
 print("Reading data from files ...")
 
@@ -111,12 +115,10 @@ f.close()
 
 
 # Read elution files into dataframe, thresholding peak specificity at 10 psm
-#   Two normalization methods:
-#     1. Normalization is performed by dividing each replicate by its maximum intensity row-wise
-#     2. Quantile normalization is performed across all samples (currently in-use)
-#   
-#   Notes: Quantile normalization smoothes out loss curve considerably, still get
-#          very rugged topology in main valley
+#   Normalization methods:
+#     1. Row-max normalization performed by dividing each fraction in a sample by the max PSM in that sample
+#     2. Quantile normalization is performed across all samples (currently in-use, smoothes best)
+#     3. Row-sum normalization performed by dividing each fraction in a sample by the summed PSM
 
 elut1_df = pd.read_csv(DATADIR_ELUT + "HEK293_EDTA_minus_SEC_control_20220626.elut", sep='\t')
 elut1_df = elut1_df.set_index('Unnamed: 0')
@@ -595,21 +597,21 @@ class siameseNet(nn.Module):
 
         self.cnn1 = nn.Sequential(
                 nn.Conv1d(in_channels=1, out_channels=4,
-                          kernel_size=3, stride=1, padding=1),
+                          kernel_size=5, stride=1, padding=2),
                 nn.BatchNorm1d(4),
-                nn.ELU(inplace=True),
+                nn.ReLU(inplace=True),
 
                 nn.Conv1d(in_channels=4, out_channels=8,
-                          kernel_size=3, stride=1, padding=1),
+                          kernel_size=4, stride=1, padding=1),
                 nn.BatchNorm1d(8),
-                nn.ELU(inplace=True),
+                nn.ReLU(inplace=True),
         )
 
         self.tns = nn.TransformerEncoder(
-                nn.TransformerEncoderLayer(d_model=8,
-                                           nhead=1, dim_feedforward=2048,
+                nn.TransformerEncoderLayer(d_model=8, activation='gelu',
+                                           nhead=1, dim_feedforward=1024,
                                            batch_first=True),
-                num_layers=6
+                num_layers=16
         )
 
         self.cnn2 = nn.Sequential(
@@ -620,7 +622,7 @@ class siameseNet(nn.Module):
 
         self.fc1 = nn.Sequential(
 
-                nn.Linear(129, 256),
+                nn.Linear(128, 256),
                 nn.ELU(inplace=True),
 
                 nn.Linear(256, 128),
@@ -762,8 +764,7 @@ if len(sys.argv) != 1:
 
 
 # Choose loss function to use
-#
-criterion = contrastiveLossEuclidean()
+criterion = contrastiveLossEuclidean(margin=MARGIN)
 
 #criterion = contrastiveLossCosineSimilarity(tau=TEMPERATURE)
 #criterion = nn.CosineEmbeddingLoss(margin=0.8, reduction='sum')
@@ -1007,7 +1008,7 @@ for i, (pos_elut0, pos_elut1, pos_label) in enumerate(test_pos_dataloader):
     euclidean_dist = F.pairwise_distance(output1, output2)
 
     # Get confidence score of similarity based on Euclidean distance
-    confidence = euclidean_to_confidence(euclidean_dist, 10.0, SENSITIVITY)
+    confidence = euclidean_to_confidence(euclidean_dist, 12.0, SENSITIVITY)
 
     # Write prediction to text file, with following line-wise format
     #   prot1:prot2 euc_dist confidence label
@@ -1190,23 +1191,45 @@ fig_kde1 = kde1.get_figure()
 fig_kde1.savefig("pearson_vs_euc_kde.png")
 fig_kde1.clf()
 
-# Plot precision vs recall
+# Calculate area under precision/recall curve
+y_labels = pos_ppi_lab_list + neg_ppi_lab_list
+y_confs = pos_ppi_conf_list + neg_ppi_conf_list
+y_pearson = pos_ppi_pearson_list + neg_ppi_pearson_list
 
+y_sort_euclidean = [y for _, y in sorted(zip(y_confs, y_labels), key = lambda pair: pair[0], reverse=False)]
+y_sort_pearson = [y for _, y in sorted(zip(y_pearson, y_labels), key = lambda pair: pair[0], reverse=True)]
 
+# Obtain precision series
+precision_euclidean = []
+for i, y in enumerate(y_sort_euclidean):
+    curr_precision = sum(y_sort_euclidean[:i+1]) / i
+    precision_euclidean.append(curr_precision)
+    \
+precision_pearson = []
+for i, y in enumerate(y_sort_pearson):
+    curr_precision = sum(y_sort_pearson[:i+1]) / i
+    precision_pearson.append(curr_precision
 
+# Plot Precision-Recall curves of Euclidean distance and Pearson as PPI predictors
+x_series = range(len(y_sort_euclidean))
+plt.plot(x_series, precision_euclidean, color='blue')
+plt.plot(x_series, precision_pearson, color='orange')
+plt.title("PR Curve")
+plt.xlabel("Samples (Sorted by Euclidean distance)")
+plt.ylabel("Precision")
+plt.savefig("pr_curve.png")
+plt.clf()
+plt.cla()
+
+# Obtain area under PR curves
+au_pr_euclidean = sum(precision_euclidean)
+au_pr_pearson = sum(precision_pearson)
 
 # Print metrics to txt file
-
-#   min_avg_valid_loss
-#   min_avg_test_loss
-#   
 with open("output.log", 'w') as outFile:
     outFile.write(f"Minimum Average Validation Loss: {min_avg_valid_loss:.4f}\n")
     outFile.write(f"Minimum Average Test Loss: {min_avg_test_loss:.4f}\n")
+    outFile.write(f"Difference Between ED Means of Pos/Neg PPIs: {diff_means_pos_neg_pdf:.4f}\n")
+    outFile.write(f"Area Under Euclidean PR Curve: {au_pr_euclidean:.4f}\n")
+    outFile.write(f"Area Under Pearson PR Curve: {au_pr_pearson:.4f}\n")
 outFile.close()
-
-# Generate precision vs recall curves for Euclidean, Pearson
-y_labels = pos_ppi_lab_list + neg_ppi_lab_list
-y_confs = pos_ppi_conf_list + neg_ppi_conf_list
-
-precision, recall, thresholds = precision-recall_curve(y_labels, y_confs)
