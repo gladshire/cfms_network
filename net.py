@@ -65,14 +65,12 @@ import curses
 import sys
 import os
 
-
-
 # Use random subset samples of test/validation sets for speed during debugging
 __FAST_VALID_TEST__ = False
 PARAMETER_FILENAME = "jul19.pt"
 
 # Program parameters
-SEED = 71
+SEED = 1
 NUM_THREAD = 4
 SUBSET_SIZE = 1000 # For if __FAST_VALID_TEST__ is True
 SAMPLE_RATE = 10 # How many batches between loss samples (for plotting loss curve)
@@ -92,6 +90,14 @@ EARLY_THRESHOLD = 0.18 # Loss value below which early stopping will occur
 TEMPERATURE = 3.0 # For cosine distance contrastive loss
 SENSITIVITY = 5 # For altering behavior of Euclidean distance to confidence function
 MARGIN = 2.0 # Minimum Euclidean separation for negative PPIs
+
+# Set up manual seeding for random number generators
+np.random.seed(SEED)
+random.seed(SEED)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed(SEED)
+torch.backends.cudnn.deterministic = True
+torch.use_deterministic_algorithms(True)
 
 
 print("Reading data from files ...")
@@ -829,28 +835,16 @@ valid_iteration_num = 0
 min_avg_valid_loss = 1e9
 min_avg_test_loss = 1e9
 
-# Reset weights
-def weights_init(m):
-    if isinstance(m, nn.Conv1d):
-        torch.nn.init.xavier_uniform_(m.weight.data)
-
-
-net.apply(weights_init)
 
 # Training loop
 if trainNet:
-    print("Instantiating model training with following architecture:")
-    print(net)
+    #print("Instantiating model training with following architecture:")
+    #print(net)
 
     print("\nWith following hyperparameters")
     print(f"Number of epochs: {NUM_EPOCHS}")
     print(f"Batch size: {BATCH_SIZE}")
     print(f"Learn rate: {LEARN_RATE}")
-
-
-    # Manually seed randomizer for reproducibility
-    torch.manual_seed(SEED)
-    torch.cuda.manual_seed(SEED)
 
     for epoch in range(NUM_EPOCHS):
         print("\n================================")
