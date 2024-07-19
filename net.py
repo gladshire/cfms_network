@@ -1,4 +1,4 @@
-# Co-fractionation 'Mass Spectrometry' Siamese Network
+# Co-fractionation Mass Spectrometry Siamese Network
 # Written by Dr. Kevin Drew and Miles Woodcock-Girard
 # For Drew Lab at University of Illinois at Chicago
 
@@ -6,6 +6,34 @@
 #       vectors for proteins A and B, returns vectors with a lower Euclidean Distance if
 #       A and B co-complex, and a higher Euclidean Distance if A and B do not co-complex.
 #       More specifically, to achieve better performance than Pearson correlation.
+
+# Data comes in form of .elut files, TSVs of protein elution traces from CF-MS experiments
+# Example:
+'''
+          f1   f2   f3   f4   f5   f6   f7   f8   f9
+PROT_ID1  0.0  0.0  0.0  2.0  5.0  2.0  0.0  0.0  0.0
+PROT_ID2  2.0  3.0  2.0  0.0  0.0  0.0  0.0  0.0  0.0
+PROT_ID3  0.0  0.0  0.0  3.0  4.0  3.0  0.0  0.0  0.0
+
+'''
+
+# One sample consists of a pair of protein elution traces from the same .elut file
+#
+# Example:  ('PROT_ID1', [0.0, 0.0, 0.0, 2.0, 5.0, 2.0, 0.0, 0.0, 0.0])
+#           ('PROT_ID2', [2.0, 3.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+# 
+# And a binary {0, 1} label where, for the purposes of math:
+#
+#   1: 'PROT_ID1' and 'PROT_ID2' do NOT co-complex (NEGATIVE / -)
+#   0: 'PROT_ID1' and 'PROT_ID2' DO co-complex (POSITIVE / +)
+#
+
+# Want to split proteins from complexes into datasets as partners. All proteins from a given complex must
+# be in the same set
+# How many proteins shared between test and training set? C3, C2, C1 splits
+#   C1 = when both proteins are in TRAIN and TEST
+#   C2 = when one of the proteins is in TRAIN and TEST
+#   C3 = when both proteins are in either TRAIN or TEST
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -39,14 +67,14 @@ import os
 
 
 
-
 # Use random subset samples of test/validation sets for speed during debugging
 __FAST_VALID_TEST__ = False
+PARAMETER_FILENAME = "jul19.pt"
 
 # Program parameters
-SEED = 2809
-NUM_THREAD = 2
-SUBSET_SIZE = 1000 # For if __FAST_VALID_TEST is True
+SEED = 71
+NUM_THREAD = 4
+SUBSET_SIZE = 1000 # For if __FAST_VALID_TEST__ is True
 SAMPLE_RATE = 10 # How many batches between loss samples (for plotting loss curve)
 
 # Database directories
@@ -58,18 +86,13 @@ NUM_EPOCHS = 25
 BATCH_SIZE = 128
 LEARN_RATE = 1e-3
 MOMENTUM = 0
+EARLY_THRESHOLD = 0.18 # Loss value below which early stopping will occur
 
 # Loss function parameters
-TEMPERATURE = 25.0 # For cosine similarity contrastive loss
+TEMPERATURE = 3.0 # For cosine distance contrastive loss
 SENSITIVITY = 5 # For altering behavior of Euclidean distance to confidence function
-MARGIN = 5.0 # Minimum Euclidean separation for negative PPIs
-  
-# Want to split proteins from complexes into datasets as partners. All proteins from a given complex must
-# be in the same set
-# How many proteins shared between test and training set? C3, C2, C1 splits
-#   C1 = when both proteins are in TRAIN and TEST
-#   C2 = when one of the proteins is in TRAIN and TEST
-#   C3 = when both proteins are in either TRAIN or TEST
+MARGIN = 2.0 # Minimum Euclidean separation for negative PPIs
+
 
 print("Reading data from files ...")
 
@@ -471,7 +494,6 @@ for i in test_neg_ppis:
     if len(i.intersection(elut_proteins)) == 2:
         testelut_neg_ppis.append(i)
 
-
 def plot_loss(iteration, loss, color, xaxis, title, filename=None):
     plt.plot(iteration, loss, color=color)
     plt.grid()
@@ -483,6 +505,15 @@ def plot_loss(iteration, loss, color, xaxis, title, filename=None):
         plt.show()
     plt.clf()
     plt.cla()
+
+def get_aupr(precision, recall):
+    aupr = 0.0
+    for i in range(1, len(precision)):
+        # Get the width (difference in recall) and height (avg. of precisions)
+        width = recall[i] - recall[i - 1]
+        height = (precision[i] + precision[i - 1]) / 2.0
+        aupr += width * height
+    return aupr
 
 # Custom function for converting Euclidean distance to confidence score, 
 # where s is a parameter making the score more sensitive to smaller distances
@@ -597,39 +628,39 @@ class siameseNet(nn.Module):
 
         self.cnn1 = nn.Sequential(
                 nn.Conv1d(in_channels=1, out_channels=4,
-                          kernel_size=5, stride=1, padding=2),
+                          kernel_size=5, stride=1, padding=1),
                 nn.BatchNorm1d(4),
                 nn.ReLU(inplace=True),
 
-                nn.Conv1d(in_channels=4, out_channels=8,
-                          kernel_size=4, stride=1, padding=1),
-                nn.BatchNorm1d(8),
-                nn.ReLU(inplace=True),
+                #nn.Conv1d(in_channels=4, out_channels=8,
+                #          kernel_size=3, stride=1, padding=1),
+                #nn.BatchNorm1d(8),
+                #nn.ReLU(inplace=True),
         )
 
         self.tns = nn.TransformerEncoder(
-                nn.TransformerEncoderLayer(d_model=8, activation='gelu',
-                                           nhead=1, dim_feedforward=1024,
+                nn.TransformerEncoderLayer(d_model=4,
+                                           nhead=1, dim_feedforward=2048,
                                            batch_first=True),
-                num_layers=16
+                num_layers=8
         )
 
         self.cnn2 = nn.Sequential(
-                nn.ConvTranspose1d(in_channels=8, out_channels=1,
+                nn.ConvTranspose1d(in_channels=4, out_channels=1,
                                    kernel_size=1),
-                nn.ELU(inplace=True),
+                nn.ReLU(inplace=True),
         )
 
         self.fc1 = nn.Sequential(
 
-                nn.Linear(128, 256),
-                nn.ELU(inplace=True),
+                nn.Linear(126, 256),
+                nn.ReLU(inplace=True),
 
                 nn.Linear(256, 128),
-                nn.ELU(inplace=True),
+                nn.ReLU(inplace=True),
 
                 nn.Linear(128, 64),
-                nn.ELU(inplace=True),
+                nn.ReLU(inplace=True),
 
                 nn.Linear(64, 16)
         )
@@ -667,16 +698,12 @@ class siameseNet(nn.Module):
         y = y.view(y.size()[0], -1)
 
         # Prepare Pearson input for network
-        pcc = pcc.view(-1, 1).expand(y.size(0), 1)
-        y = torch.cat((y, pcc), dim=1)
+        #pcc = pcc.view(-1, 1).expand(y.size(0), 1)
+        #y = torch.cat((y, pcc), dim=1)
 
         # Apply fully connected layer
         # Potentiall add Pearson correlation coefficient here
         y = self.fc1(y)
-
-        # Prepare Pearson input for network
-        #pcc = pcc.view(-1, 1).expand(y.size(0), 1)
-        #y = torch.cat((y, pcc), dim=1)
 
         return y
 
@@ -697,26 +724,25 @@ class contrastiveLossEuclidean(torch.nn.Module):
     # Contrastive loss calculation
     def forward(self, output1, output2, label):
         euclidean_dist = F.pairwise_distance(output1, output2, keepdim=True)
-        loss_contrastive = torch.mean((1-label) * torch.pow(euclidean_dist, 2) +
-                                      (label) * torch.pow(torch.clamp(self.margin - euclidean_dist, min=0.0), 2))
-
-        
-        return loss_contrastive
+        loss = torch.mean((1-label) * torch.pow(euclidean_dist, 2) +
+                          (label) * torch.pow(torch.clamp(self.margin - euclidean_dist, min=0.0), 2))
+        return loss
 
 # Define SimCLR contrastive loss, based on cosine similarity
-class contrastiveLossCosineSimilarity(nn.Module):
+class contrastiveLossCosineDistance(nn.Module):
     def __init__(self, margin=0.2, tau=1.0):
-        super(contrastiveLossCosineSimilarity, self).__init__()
+        super(contrastiveLossCosineDistance, self).__init__()
         self.margin = margin
         self.tau = tau
 
     def forward(self, output1, output2, label):
-        cos_sim = F.cosine_similarity(output1, output2)
-        cos_sim_t = cos_sim / self.tau
+        cos_dist = 1.0 - F.cosine_similarity(output1, output2)
+        cos_dist_t = cos_dist / self.tau
 
-        loss_contrastive = torch.mean((1-label) * torch.pow(cos_sim_t, 2) +
-                                      (label) * torch.pow(torch.clamp(self.margin - cos_sim_t, min=0.0), 2))
-        return loss_contrastive
+        loss = torch.mean((1-label) * torch.pow(cos_dist_t, 2) +
+                          (label) * torch.pow(torch.clamp(self.margin -
+                                              cos_dist_t, min=0.0), 2))
+        return loss
 
 
 print("Network defined. Wrapping elution datasets in DataLoaders ...")
@@ -765,8 +791,7 @@ if len(sys.argv) != 1:
 
 # Choose loss function to use
 criterion = contrastiveLossEuclidean(margin=MARGIN)
-
-#criterion = contrastiveLossCosineSimilarity(tau=TEMPERATURE)
+#criterion = contrastiveLossCosineDistance(tau=TEMPERATURE)
 #criterion = nn.CosineEmbeddingLoss(margin=0.8, reduction='sum')
 
 
@@ -813,7 +838,6 @@ def weights_init(m):
 net.apply(weights_init)
 
 # Training loop
-#net.train()
 if trainNet:
     print("Instantiating model training with following architecture:")
     print(net)
@@ -824,11 +848,14 @@ if trainNet:
     print(f"Learn rate: {LEARN_RATE}")
 
 
+    # Manually seed randomizer for reproducibility
     torch.manual_seed(SEED)
+    torch.cuda.manual_seed(SEED)
+
     for epoch in range(NUM_EPOCHS):
-        print("\n=====================================")
+        print("\n================================")
         print(f"Epoch: {epoch+1} of {NUM_EPOCHS}")
-        print("=====================================\n")
+        print("================================\n")
     
         # Iterate over batches
         net.train()
@@ -863,6 +890,7 @@ if trainNet:
             # Optimize
             optimizer.step()
 
+            # Update training loss series for plotting
             if i % SAMPLE_RATE == 0:
                 print(f"  Batch [{i} / {num_batches}] Training Loss: {loss_train_contrastive.item()}")
                 iteration_num += SAMPLE_RATE
@@ -870,10 +898,13 @@ if trainNet:
                 counter.append(iteration_num)
                 loss_hist.append(loss_train_contrastive.item())
 
-        # Validation
+        # Produce training loss curve figure PNG
+        plot_loss(counter, loss_hist, title="Contrastive Loss - Train",
+                  xaxis="Batches", color='blue', filename=f"train_{epoch+1}.png")
+
+        # Test model on validation set 
         net.eval()
         valid_loss = 0.0
-        # Iterate over batches
         num_batches_valid = len(valid_dataloader)
         for valid_i, (valid_elut0, valid_elut1, valid_label) in enumerate(valid_dataloader, 0):
             pccListValid = []
@@ -893,14 +924,19 @@ if trainNet:
 
             # Pass outputs, label to the contrastive loss function
             valid_loss_contrastive = criterion(valid_output1, valid_output2, valid_label)
+
+            # Add to total validation loss
             valid_loss += valid_loss_contrastive.item()
 
+            # Update validation loss series for plotting
             if valid_i % SAMPLE_RATE == 0:
                 print(f"  Batch [{valid_i} / {num_batches_valid}] Validation Loss: {valid_loss_contrastive.item()}")
                 valid_iteration_num += SAMPLE_RATE
 
                 valid_counter.append(valid_iteration_num)
                 valid_loss_hist.append(valid_loss_contrastive.item())
+
+        # Obtain the average validation set loss per batch
         avg_valid_loss = valid_loss / len(valid_dataloader)
         if avg_valid_loss < min_avg_valid_loss:
             min_avg_valid_loss = avg_valid_loss
@@ -934,6 +970,8 @@ if trainNet:
 
                 # Pass outputs, label to the contrastive loss function
                 loss_test_contrastive = criterion(output1, output2, test_label)
+
+                # Add to total test loss
                 test_loss += loss_test_contrastive
 
                 if test_i % 5 == 0:
@@ -941,25 +979,31 @@ if trainNet:
 
         # Calculate average loss on test dataset
         avg_test_loss = test_loss / len(test_dataloader)
+
+        # Get new minimum average test set loss for final reporting
         if avg_test_loss < min_avg_test_loss:
             min_avg_test_loss = avg_test_loss
+
+        # Append to test loss vs epochs series
         epoch_hist.append(epoch+1)
         avg_test_loss_hist.append(avg_test_loss)
+
+        # Summarize end of epoch metrics
         print(f"\nEnd of epoch summary")
         print(f"  Average validation loss: {avg_valid_loss}")
         print(f"  Average testing loss: {avg_test_loss}")
-        if avg_test_loss < 0.00001:
-            break
-        plot_loss(counter, loss_hist, title="Contrastive Loss - Train",
-                  xaxis="Batches", color='blue', filename=f"train_{epoch+1}.png")
-        plot_loss(valid_counter, valid_loss_hist, title="Contrastive Loss - Validation",
-                  xaxis="Batches", color = 'orange', filename=f"valid_{epoch+1}.png")
+
+        # Plot average test set loss vs epoch number 
         if epoch != 0:
             plot_loss(epoch_hist, avg_test_loss_hist, title="Avg Cont Loss - Testing", 
                       color='red', xaxis="Epochs", filename=f"test_{epoch+1}.png")
 
+        # Early stopping according to user-defined threshold
+        if avg_test_loss < EARLY_THRESHOLD:
+            break
+
 # Save the model weights
-torch.save(net.state_dict(), "./net_SGD.pt")
+torch.save(net.state_dict(), PARAMETER_FILENAME)
 
 # TEST EUCLIDEAN
 test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
@@ -1021,7 +1065,7 @@ for i, (pos_elut0, pos_elut1, pos_label) in enumerate(test_pos_dataloader):
     if i % 5 == 0:
         print(f"Calculating Euclidean distances for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
 pos_ppi_conf_output_file.close()
-print("Calculating Euclidean distances for positive pairwise interactions ... done   ")
+print("Calculating Euclidean distances for positive pairwise interactions ... done      ")
 
 # Test only negative ppis
 test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
@@ -1080,7 +1124,7 @@ for i, (neg_elut0, neg_elut1, neg_label) in enumerate(test_neg_dataloader):
     if i % 5 == 0:
         print(f"Calculating Euclidean distances for negative pairwise interactions ... {i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
 neg_ppi_conf_output_file.close()
-print("Calculating Euclidean distances for negative pairwise interactions ... done   ")
+print("Calculating Euclidean distances for negative pairwise interactions ... done      ")
 
 # Plot the PDF of the euclidean distance between positive and negative protein pairs
 x = np.linspace(-5,20,1000)
@@ -1123,7 +1167,7 @@ for elut0, elut1, label in test_pos_dataloader:
 
     if i % 5 == 0:
         print(f"Calculating Pearson scores for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
-
+print("Calculating Pearson scores for positive pairwise interactions ... done      ")
 
 neg_ppi_pearson_list = []
 for i, (elut0, elut1, label) in enumerate(test_neg_dataloader):
@@ -1133,7 +1177,7 @@ for i, (elut0, elut1, label) in enumerate(test_neg_dataloader):
 
     if i % 5 == 0:
         print(f"Calculating Pearson scores for negative pairwise interactions ... {i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
-
+print("Calculating Pearson scores for negative pairwise interactions ... done      ")
 
 
 
@@ -1191,45 +1235,74 @@ fig_kde1 = kde1.get_figure()
 fig_kde1.savefig("pearson_vs_euc_kde.png")
 fig_kde1.clf()
 
-# Calculate area under precision/recall curve
+# Get labels, confidences, Euclidean distances, Pearson coefficients of test points
 y_labels = pos_ppi_lab_list + neg_ppi_lab_list
 y_confs = pos_ppi_conf_list + neg_ppi_conf_list
+y_dists = pos_ppi_euclidean_dist_list + neg_ppi_euclidean_dist_list
 y_pearson = pos_ppi_pearson_list + neg_ppi_pearson_list
 
-y_sort_euclidean = [y for _, y in sorted(zip(y_confs, y_labels), key = lambda pair: pair[0], reverse=False)]
-y_sort_pearson = [y for _, y in sorted(zip(y_pearson, y_labels), key = lambda pair: pair[0], reverse=True)]
 
-# Obtain precision series
+# Invert y_labels series s.t. '1' is positive and '0' is negative
+y_labels_not = [1.0 - y for y in y_labels]
+
+# Sort inverted y_labels series according to ascending Euclidean distance
+y_sort_euclidean = [y for _, y in sorted(zip(y_dists, y_labels_not), key = lambda pair: pair[0], reverse=False)]
+
+# Sort inverted y_labels series according to descending Pearson correlation
+y_sort_pearson = [y for _, y in sorted(zip(y_pearson, y_labels_not), key = lambda pair: pair[0], reverse=True)]
+
+true_pos = sum(y_labels_not)
+
+# Calculate precision and recall for Euclidean
 precision_euclidean = []
-for i, y in enumerate(y_sort_euclidean):
-    curr_precision = sum(y_sort_euclidean[:i+1]) / i
+recall_euclidean = []
+true_pos_euclidean = 0
+
+for i, y in enumerate(y_sort_euclidean, start=1):
+    true_pos_euclidean += y
+    curr_precision = true_pos_euclidean / i
+    curr_recall = true_pos_euclidean / true_pos
     precision_euclidean.append(curr_precision)
-    \
+    recall_euclidean.append(curr_recall)
+    if i % 100 == 0:
+        print(f"Calculating precision-recall for model ... {i * 100 / len(y_sort_euclidean):.4f} %", end='\r')
+print("Calculating precision-recall for model ... done")
+
+
+# Calculate precision and recall for Pearson
 precision_pearson = []
-for i, y in enumerate(y_sort_pearson):
-    curr_precision = sum(y_sort_pearson[:i+1]) / i
-    precision_pearson.append(curr_precision
+recall_pearson = []
+true_pos_pearson = 0
+
+for i, y in enumerate(y_sort_pearson, start=1):
+    true_pos_pearson += y
+    curr_precision = true_pos_pearson / i
+    curr_recall = true_pos_pearson / true_pos
+    precision_pearson.append(curr_precision)
+    recall_pearson.append(curr_recall)
+    if i % 100 == 0:
+        print(f"Calculating precision-recall for Pearson ... {i * 100 / len(y_sort_pearson):.4f} %", end='\r')
+print("Calculating precision-recall for Pearson ... done")
 
 # Plot Precision-Recall curves of Euclidean distance and Pearson as PPI predictors
-x_series = range(len(y_sort_euclidean))
-plt.plot(x_series, precision_euclidean, color='blue')
-plt.plot(x_series, precision_pearson, color='orange')
+plt.plot(recall_euclidean, precision_euclidean, color='blue')
+plt.plot(recall_pearson, precision_pearson, color='orange')
 plt.title("PR Curve")
-plt.xlabel("Samples (Sorted by Euclidean distance)")
+plt.xlabel("Recall")
 plt.ylabel("Precision")
 plt.savefig("pr_curve.png")
 plt.clf()
 plt.cla()
 
 # Obtain area under PR curves
-au_pr_euclidean = sum(precision_euclidean)
-au_pr_pearson = sum(precision_pearson)
+aupr_euclidean = get_aupr(precision_euclidean, recall_euclidean)
+aupr_pearson = get_aupr(precision_pearson, recall_pearson)
 
 # Print metrics to txt file
 with open("output.log", 'w') as outFile:
     outFile.write(f"Minimum Average Validation Loss: {min_avg_valid_loss:.4f}\n")
     outFile.write(f"Minimum Average Test Loss: {min_avg_test_loss:.4f}\n")
     outFile.write(f"Difference Between ED Means of Pos/Neg PPIs: {diff_means_pos_neg_pdf:.4f}\n")
-    outFile.write(f"Area Under Euclidean PR Curve: {au_pr_euclidean:.4f}\n")
-    outFile.write(f"Area Under Pearson PR Curve: {au_pr_pearson:.4f}\n")
+    outFile.write(f"Area Under Euclidean PR Curve: {aupr_euclidean:.4f}\n")
+    outFile.write(f"Area Under Pearson PR Curve: {aupr_pearson:.4f}\n")
 outFile.close()
