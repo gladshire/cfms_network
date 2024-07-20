@@ -70,7 +70,7 @@ __FAST_VALID_TEST__ = False
 PARAMETER_FILENAME = "jul19.pt"
 
 # Program parameters
-SEED = 1
+SEED = 5123
 NUM_THREAD = 4
 SUBSET_SIZE = 1000 # For if __FAST_VALID_TEST__ is True
 SAMPLE_RATE = 10 # How many batches between loss samples (for plotting loss curve)
@@ -80,11 +80,11 @@ DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
 
 # Training parameters
-NUM_EPOCHS = 25
+NUM_EPOCHS = 50
 BATCH_SIZE = 128
 LEARN_RATE = 1e-3
 MOMENTUM = 0
-EARLY_THRESHOLD = 0.18 # Loss value below which early stopping will occur
+EARLY_THRESHOLD = 0.01 # Loss value below which early stopping will occur
 
 # Loss function parameters
 TEMPERATURE = 3.0 # For cosine distance contrastive loss
@@ -500,11 +500,18 @@ for i in test_neg_ppis:
     if len(i.intersection(elut_proteins)) == 2:
         testelut_neg_ppis.append(i)
 
-def plot_loss(iteration, loss, color, xaxis, title, filename=None):
-    plt.plot(iteration, loss, color=color)
+def plot_loss(iteration, loss_lists, labels, xaxis, title, filename=None):
+    if len(labels) != len(loss_lists):
+        print("ERROR: Mismatch in plot lengths")
+        print(len(labels))
+        print(len(loss_tuple))
+        exit()
+    for loss_series in loss_lists:
+        plt.plot(iteration, loss_series)
     plt.grid()
     plt.title(title)
     plt.xlabel(xaxis)
+    plt.legend(labels)
     if filename:
         plt.savefig(filename)
     else:
@@ -634,32 +641,40 @@ class siameseNet(nn.Module):
 
         self.cnn1 = nn.Sequential(
                 nn.Conv1d(in_channels=1, out_channels=4,
-                          kernel_size=5, stride=1, padding=1),
+                          kernel_size=3, stride=1, padding=1),
                 nn.BatchNorm1d(4),
                 nn.ReLU(inplace=True),
 
-                #nn.Conv1d(in_channels=4, out_channels=8,
-                #          kernel_size=3, stride=1, padding=1),
-                #nn.BatchNorm1d(8),
-                #nn.ReLU(inplace=True),
+                nn.Conv1d(in_channels=4, out_channels=16,
+                          kernel_size=3, stride=1, padding=1),
+                nn.BatchNorm1d(16),
+                nn.ReLU(inplace=True),
+
+                nn.Conv1d(in_channels=16, out_channels=32,
+                          kernel_size=3, stride=1, padding=1),
+                nn.BatchNorm1d(32),
+                nn.ReLU(inplace=True),
         )
 
+        self.rnn = nn.LSTM(input_size=32, hidden_size=hidden_size, num_layers=1,
+                           bidirectional=True, batch_first=True)
+
         self.tns = nn.TransformerEncoder(
-                nn.TransformerEncoderLayer(d_model=4,
-                                           nhead=1, dim_feedforward=2048,
+                nn.TransformerEncoderLayer(d_model=32,
+                                           nhead=1, dim_feedforward=hidden_size,
                                            batch_first=True),
-                num_layers=8
+                num_layers=3
         )
 
         self.cnn2 = nn.Sequential(
-                nn.ConvTranspose1d(in_channels=4, out_channels=1,
+                nn.ConvTranspose1d(in_channels=2*hidden_size, out_channels=1,
                                    kernel_size=1),
                 nn.ReLU(inplace=True),
         )
 
         self.fc1 = nn.Sequential(
 
-                nn.Linear(126, 256),
+                nn.Linear(128, 256),
                 nn.ReLU(inplace=True),
 
                 nn.Linear(256, 128),
@@ -668,7 +683,7 @@ class siameseNet(nn.Module):
                 nn.Linear(128, 64),
                 nn.ReLU(inplace=True),
 
-                nn.Linear(64, 16)
+                nn.Linear(64, 32)
         )
 
 
@@ -682,15 +697,12 @@ class siameseNet(nn.Module):
         #print(y.shape)
         y = y.permute(0, 2, 1)
 
-        # Apply transformer layer
-        #y = self.tns(y)
-
         # Apply bidirectional recurrency
-        #y, _ = self.rnn(y)
+        y, _ = self.rnn(y)
 
         # Apply transformer layer
         #print(y.shape)
-        y = self.tns(y)
+        #y = self.tns(y)
 
         # Prepare for convolutional decoding
         #print(y.shape)
@@ -734,9 +746,9 @@ class contrastiveLossEuclidean(torch.nn.Module):
                           (label) * torch.pow(torch.clamp(self.margin - euclidean_dist, min=0.0), 2))
         return loss
 
-# Define SimCLR contrastive loss, based on cosine similarity
+# Define SimCLR contrastive loss, based on cosine distance
 class contrastiveLossCosineDistance(nn.Module):
-    def __init__(self, margin=0.2, tau=1.0):
+    def __init__(self, margin=1.0, tau=1.0):
         super(contrastiveLossCosineDistance, self).__init__()
         self.margin = margin
         self.tau = tau
@@ -829,11 +841,21 @@ valid_counter = []
 valid_loss_hist = []
 epoch_hist = []
 avg_test_loss_hist = []
+avg_valid_loss_hist = []
+avg_train_loss_hist = []
 iteration_num = 0
 valid_iteration_num = 0
 
 min_avg_valid_loss = 1e9
 min_avg_test_loss = 1e9
+
+
+
+def weights_init(m):
+    if isinstance(m, nn.Conv1d):
+        torch.nn.init.xavier_uniform_(m.weight.data)                 
+
+#net.apply(weights_init)
 
 
 # Training loop
@@ -853,6 +875,7 @@ if trainNet:
     
         # Iterate over batches
         net.train()
+        train_loss = 0
         num_batches = len(train_dataloader)
         for i, (elut0, elut1, label) in enumerate(train_dataloader, 0):
             pccList = []
@@ -876,25 +899,25 @@ if trainNet:
             output1, output2 = net(elut0, elut1, pcc)
 
             # Pass outputs, label to the contrastive loss function
-            loss_train_contrastive = criterion(output1, output2, label)
+            train_loss_contrastive = criterion(output1, output2, label)
 
             # Perform backpropagation
-            loss_train_contrastive.backward()
+            train_loss_contrastive.backward()
 
             # Optimize
             optimizer.step()
 
             # Update training loss series for plotting
             if i % SAMPLE_RATE == 0:
-                print(f"  Batch [{i} / {num_batches}] Training Loss: {loss_train_contrastive.item()}")
+                print(f"  Batch [{i} / {num_batches}] Training Loss: {train_loss_contrastive.item()}")
                 iteration_num += SAMPLE_RATE
 
                 counter.append(iteration_num)
-                loss_hist.append(loss_train_contrastive.item())
-
+                loss_hist.append(train_loss_contrastive.item())
+  
         # Produce training loss curve figure PNG
-        plot_loss(counter, loss_hist, title="Contrastive Loss - Train",
-                  xaxis="Batches", color='blue', filename=f"train_{epoch+1}.png")
+        plot_loss(counter, [loss_hist], ["Training loss"], title="Contrastive Loss - Train",
+                  xaxis="Batches", filename=f"train_{epoch+1}.png")
 
         # Test model on validation set 
         net.eval()
@@ -978,9 +1001,10 @@ if trainNet:
         if avg_test_loss < min_avg_test_loss:
             min_avg_test_loss = avg_test_loss
 
-        # Append to test loss vs epochs series
+        # Append to avg loss vs epochs series
         epoch_hist.append(epoch+1)
         avg_test_loss_hist.append(avg_test_loss)
+        avg_valid_loss_hist.append(avg_valid_loss)
 
         # Summarize end of epoch metrics
         print(f"\nEnd of epoch summary")
@@ -989,8 +1013,10 @@ if trainNet:
 
         # Plot average test set loss vs epoch number 
         if epoch != 0:
-            plot_loss(epoch_hist, avg_test_loss_hist, title="Avg Cont Loss - Testing", 
-                      color='red', xaxis="Epochs", filename=f"test_{epoch+1}.png")
+            plot_loss(epoch_hist, [avg_test_loss_hist, avg_valid_loss_hist],
+                      ["Testing loss", "Validation loss"],
+                      title="Average Contrastive Loss", xaxis="Epochs",
+                      filename=f"epoch_{epoch+1}.png")
 
         # Early stopping according to user-defined threshold
         if avg_test_loss < EARLY_THRESHOLD:
@@ -1154,7 +1180,7 @@ pylab.cla()
 # TEST PEARSON
 # Obtain Pearson correlation between protein pairs
 pos_ppi_pearson_list = []
-for elut0, elut1, label in test_pos_dataloader:
+for i, (elut0, elut1, label) in enumerate(test_pos_dataloader):
     prot0, prot1 = elut0[0], elut1[0]
     elut0, elut1 = elut0[1], elut1[1]
     pos_ppi_pearson_list.append(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
@@ -1285,6 +1311,7 @@ plt.title("PR Curve")
 plt.xlabel("Recall")
 plt.ylabel("Precision")
 plt.savefig("pr_curve.png")
+plt.legend(["Euclidean PR", "Pearson PR"])
 plt.clf()
 plt.cla()
 
