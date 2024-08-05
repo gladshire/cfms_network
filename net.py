@@ -1,3 +1,6 @@
+# TODO: Create random sampling PR curve function for plotting precision-recall every epoch
+# TODO: Try thresholding positive PPIs for Pearson > 0.1
+
 # Co-fractionation Mass Spectrometry Siamese Network
 # Written by Dr. Kevin Drew and Miles Woodcock-Girard
 # For Drew Lab at University of Illinois at Chicago
@@ -67,29 +70,30 @@ import os
 
 # Use random subset samples of test/validation sets for speed during debugging
 __FAST_VALID_TEST__ = False
-PARAMETER_FILENAME = "jul19.pt"
+PARAMETER_FILENAME = "jul29.pt"
 
 # Program parameters
 SEED = 5123
 NUM_THREAD = 4
 SUBSET_SIZE = 1000 # For if __FAST_VALID_TEST__ is True
-SAMPLE_RATE = 10 # How many batches between loss samples (for plotting loss curve)
+SAMPLE_RATE = 10   # How many batches between loss samples (for plotting loss curve)
 
 # Database directories
 DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
 
 # Training parameters
-NUM_EPOCHS = 50
+NUM_EPOCHS = 25
 BATCH_SIZE = 128
 LEARN_RATE = 1e-3
 MOMENTUM = 0
 EARLY_THRESHOLD = 0.01 # Loss value below which early stopping will occur
 
 # Loss function parameters
-TEMPERATURE = 3.0 # For cosine distance contrastive loss
-SENSITIVITY = 5 # For altering behavior of Euclidean distance to confidence function
-MARGIN = 2.0 # Minimum Euclidean separation for negative PPIs
+TEMPERATURE = 1.0 # For cosine distance contrastive loss
+SENSITIVITY = 3   # For changing behavior confidence function. Higher values push conf. towards lower ED
+MARGIN = 2.0      # Minimum Euclidean separation for negative PPIs
+MAX_ED = 3.75     # Euclidean distance threshold for 0% confidence 
 
 # Set up manual seeding for random number generators
 np.random.seed(SEED)
@@ -100,9 +104,10 @@ torch.backends.cudnn.deterministic = True
 torch.use_deterministic_algorithms(True)
 
 
-print("Reading data from files ...")
+print("Retrieving data from files ...")
 
-# Read in training complexes
+# Parse complex files to obtain accurate PPI labels for training data
+# Read in all training complexes
 training_complexes = []
 training_complex_file = DATADIR_PPIS + "intact_complex_merge_20230309.train.txt"
 f = open(training_complex_file)
@@ -110,8 +115,7 @@ for line in f.readlines():
     training_complexes.append(set(line.split()))
 f.close()
 
-
-# Read in training PPIs
+# Read in positive PPIs from training data
 training_pos_ppis = []
 training_pos_ppis_file = DATADIR_PPIS + "intact_complex_merge_20230309.train_ppis.txt"
 f = open(training_pos_ppis_file)
@@ -119,6 +123,7 @@ for line in f.readlines():
     training_pos_ppis.append(set(line.split()))
 f.close()
 
+# Read in negative PPIs from training data
 training_neg_ppis = []
 training_neg_ppis_file = DATADIR_PPIS + "intact_complex_merge_20230309.neg_train_ppis.txt"
 f = open(training_neg_ppis_file)
@@ -127,7 +132,7 @@ for line in f.readlines():
 f.close()
 
 
-# Read in test PPIs
+# Read in positive PPIs from test data
 test_pos_ppis = []
 test_pos_ppis_file = DATADIR_PPIS + "intact_complex_merge_20230309.test_ppis.txt"
 f = open(test_pos_ppis_file)
@@ -135,6 +140,7 @@ for line in f.readlines():
     test_pos_ppis.append(set(line.split()))
 f.close()
 
+# Read in negative PPIs from test data
 test_neg_ppis = []
 test_neg_ppis_file = DATADIR_PPIS + "intact_complex_merge_20230309.neg_test_ppis.txt"
 f = open(test_neg_ppis_file)
@@ -143,320 +149,56 @@ for line in f.readlines():
 f.close()
 
 
-# Read elution files into dataframe, thresholding peak specificity at 10 psm
-#   Normalization methods:
-#     1. Row-max normalization performed by dividing each fraction in a sample by the max PSM in that sample
-#     2. Quantile normalization is performed across all samples (currently in-use, smoothes best)
-#     3. Row-sum normalization performed by dividing each fraction in a sample by the summed PSM
-
-elut1_df = pd.read_csv(DATADIR_ELUT + "HEK293_EDTA_minus_SEC_control_20220626.elut", sep='\t')
-elut1_df = elut1_df.set_index('Unnamed: 0')
-elut1_t10_df = elut1_df[elut1_df.sum(axis=1) > 10]
-elut1_t10_rwn_df = elut1_t10_df.div(elut1_t10_df.max(axis=1), axis=0)
-elut1_t10_rsm_df = elut1_t10_df.div(elut1_t10_df.sum(axis=1), axis=0)
-elut1_t10_qtn_df = qnorm.quantile_normalize(elut1_t10_df, axis=0)
-
-elut2_df = pd.read_csv(DATADIR_ELUT + "HEK293_EDTA_plus_SEC_treatment_20220626_trimmed.elut", sep='\t')
-elut2_df = elut2_df.set_index('Unnamed: 0')
-elut2_t10_df = elut2_df[elut2_df.sum(axis=1) > 10]
-elut2_t10_rwn_df = elut2_t10_df.div(elut2_t10_df.max(axis=1), axis=0)
-elut2_t10_rsm_df = elut2_t10_df.div(elut2_t10_df.sum(axis=1), axis=0)
-elut2_t10_qtn_df = qnorm.quantile_normalize(elut2_t10_df, axis=0)
-
-elut3_df = pd.read_csv(DATADIR_ELUT + "Anna_HEK_urea_SEC_0M_050817_20220314b_trimmed.elut", sep='\t')
-elut3_df = elut3_df.set_index('Unnamed: 0')
-elut3_t10_df = elut3_df[elut3_df.sum(axis=1) > 10]
-elut3_t10_rwn_df = elut3_t10_df.div(elut3_t10_df.max(axis=1), axis=0)
-elut3_t10_rsm_df = elut3_t10_df.div(elut3_t10_df.sum(axis=1), axis=0)
-elut3_t10_qtn_df = qnorm.quantile_normalize(elut3_t10_df, axis=0)
-
-elut4_df = pd.read_csv(DATADIR_ELUT + "Anna_HEK_urea_SEC_0p5M_052317_20220315_reviewed_trimmed.elut", sep='\t')
-elut4_df = elut4_df.set_index('Unnamed: 0')
-elut4_t10_df = elut4_df[elut4_df.sum(axis=1) > 10]
-elut4_t10_rwn_df = elut4_t10_df.div(elut4_t10_df.max(axis=1), axis=0)
-elut4_t10_rsm_df = elut4_t10_df.div(elut4_t10_df.sum(axis=1), axis=0)
-elut4_t10_qtn_df = qnorm.quantile_normalize(elut4_t10_df, axis=0)
-
-elut5_df = pd.read_csv(DATADIR_ELUT + "Hs_helaN_1010_ACC.prot_count_mFDRpsm001.elut", sep='\t')
-elut5_df = elut5_df.set_index('Unnamed: 0')
-elut5_t10_df = elut5_df[elut5_df.sum(axis=1) > 10]
-elut5_t10_rwn_df = elut5_t10_df.div(elut5_t10_df.max(axis=1), axis=0)
-elut5_t10_rsm_df = elut5_t10_df.div(elut5_t10_df.sum(axis=1), axis=0)
-elut5_t10_qtn_df = qnorm.quantile_normalize(elut5_t10_df, axis=0)
-
-elut6_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_1.elut", sep='\t')
-elut6_df = elut6_df.set_index('Unnamed: 0')
-elut6_t10_df = elut6_df[elut6_df.sum(axis=1) > 10]
-elut6_t10_rwn_df = elut6_t10_df.div(elut6_t10_df.max(axis=1), axis=0)
-elut6_t10_rsm_df = elut6_t10_df.div(elut6_t10_df.sum(axis=1), axis=0)
-elut6_t10_qtn_df = qnorm.quantile_normalize(elut6_t10_df, axis=0)
-
-elut7_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_2.elut", sep='\t')
-elut7_df = elut7_df.set_index('Unnamed: 0')
-elut7_t10_df = elut7_df[elut7_df.sum(axis=1) > 10]
-elut7_t10_rwn_df = elut7_t10_df.div(elut7_t10_df.max(axis=1), axis=0)
-elut7_t10_rsm_df = elut7_t10_df.div(elut7_t10_df.sum(axis=1), axis=0)
-elut7_t10_qtn_df = qnorm.quantile_normalize(elut7_t10_df, axis=0)
-
-elut8_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_3.elut", sep='\t')
-elut8_df = elut8_df.set_index('Unnamed: 0')
-elut8_t10_df = elut8_df[elut8_df.sum(axis=1) > 10]
-elut8_t10_rwn_df = elut8_t10_df.div(elut8_t10_df.max(axis=1), axis=0)
-elut8_t10_rsm_df = elut8_t10_df.div(elut8_t10_df.sum(axis=1), axis=0)
-elut8_t10_qtn_df = qnorm.quantile_normalize(elut8_t10_df, axis=0)
-
-elut9_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_4.elut", sep='\t')
-elut9_df = elut9_df.set_index('Unnamed: 0')
-elut9_t10_df = elut9_df[elut9_df.sum(axis=1) > 10]
-elut9_t10_rwn_df = elut9_t10_df.div(elut9_t10_df.max(axis=1), axis=0)
-elut9_t10_rsm_df = elut9_t10_df.div(elut9_t10_df.sum(axis=1), axis=0)
-elut9_t10_qtn_df = qnorm.quantile_normalize(elut9_t10_df, axis=0)
-
-elut10_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_5.elut", sep='\t')
-elut10_df = elut10_df.set_index('Unnamed: 0')
-elut10_t10_df = elut10_df[elut10_df.sum(axis=1) > 10]
-elut10_t10_rwn_df = elut10_t10_df.div(elut10_t10_df.max(axis=1), axis=0)
-elut10_t10_rsm_df = elut10_t10_df.div(elut10_t10_df.sum(axis=1), axis=0)
-elut10_t10_qtn_df = qnorm.quantile_normalize(elut10_t10_df, axis=0)
-
-elut11_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_6.elut", sep='\t')
-elut11_df = elut11_df.set_index('Unnamed: 0')
-elut11_t10_df = elut11_df[elut11_df.sum(axis=1) > 10]
-elut11_t10_rwn_df = elut11_t10_df.div(elut11_t10_df.max(axis=1), axis=0)
-elut11_t10_rsm_df = elut11_t10_df.div(elut11_t10_df.sum(axis=1), axis=0)
-elut11_t10_qtn_df = qnorm.quantile_normalize(elut11_t10_df, axis=0)
-
-elut12_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_7.elut", sep='\t')
-elut12_df = elut12_df.set_index('Unnamed: 0')
-elut12_t10_df = elut12_df[elut12_df.sum(axis=1) > 10]
-elut12_t10_rwn_df = elut12_t10_df.div(elut12_t10_df.max(axis=1), axis=0)
-elut12_t10_rsm_df = elut12_t10_df.div(elut12_t10_df.sum(axis=1), axis=0)
-elut12_t10_qtn_df = qnorm.quantile_normalize(elut12_t10_df, axis=0)
-
-elut13_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_8.elut", sep='\t')
-elut13_df = elut13_df.set_index('Unnamed: 0')
-elut13_t10_df = elut13_df[elut13_df.sum(axis=1) > 10]
-elut13_t10_rwn_df = elut13_t10_df.div(elut13_t10_df.max(axis=1), axis=0)
-elut13_t10_rsm_df = elut13_t10_df.div(elut13_t10_df.sum(axis=1), axis=0)
-elut13_t10_qtn_df = qnorm.quantile_normalize(elut13_t10_df, axis=0)
-
-elut14_df = pd.read_csv(DATADIR_ELUT + "Hs_HCW_9.elut", sep='\t')
-elut14_df = elut14_df.set_index('Unnamed: 0')
-elut14_t10_df = elut14_df[elut14_df.sum(axis=1) > 10]
-elut14_t10_rwn_df = elut14_t10_df.div(elut14_t10_df.max(axis=1), axis=0)
-elut14_t10_rsm_df = elut14_t10_df.div(elut14_t10_df.sum(axis=1), axis=0)
-elut14_t10_qtn_df = qnorm.quantile_normalize(elut14_t10_df, axis=0)
-
-elut15_df = pd.read_csv(DATADIR_ELUT + "Hs_IEX_1.elut", sep='\t')
-elut15_df = elut15_df.set_index('Unnamed: 0')
-elut15_t10_df = elut15_df[elut15_df.sum(axis=1) > 10]
-elut15_t10_rwn_df = elut15_t10_df.div(elut15_t10_df.max(axis=1), axis=0)
-elut15_t10_rsm_df = elut15_t10_df.div(elut15_t10_df.sum(axis=1), axis=0)
-elut15_t10_qtn_df = qnorm.quantile_normalize(elut15_t10_df, axis=0)
-
-elut16_df = pd.read_csv(DATADIR_ELUT + "Hs_IEX_2.elut", sep='\t')
-elut16_df = elut16_df.set_index('Unnamed: 0')
-elut16_t10_df = elut16_df[elut16_df.sum(axis=1) > 10]
-elut16_t10_rwn_df = elut16_t10_df.div(elut16_t10_df.max(axis=1), axis=0)
-elut16_t10_rsm_df = elut16_t10_df.div(elut16_t10_df.sum(axis=1), axis=0)
-elut16_t10_qtn_df = qnorm.quantile_normalize(elut16_t10_df, axis=0)
-
-elut17_df = pd.read_csv(DATADIR_ELUT + "T98G_glioblastoma_multiforme_cells_SEC_Conelly_2018_Bio1.elut", sep='\t')
-elut17_df = elut17_df.set_index('Unnamed: 0')
-elut17_t10_df = elut17_df[elut17_df.sum(axis=1) > 10]
-elut17_t10_rwn_df = elut17_t10_df.div(elut17_t10_df.max(axis=1), axis=0)
-elut17_t10_rsm_df = elut17_t10_df.div(elut17_t10_df.sum(axis=1), axis=0)
-elut17_t10_qtn_df = qnorm.quantile_normalize(elut17_t10_df, axis=0)
-
-elut18_df = pd.read_csv(DATADIR_ELUT + "T98G_glioblastoma_multiforme_cells_SEC_Conelly_2018_Bio2.elut", sep='\t')
-elut18_df = elut18_df.set_index('Unnamed: 0')
-elut18_t10_df = elut18_df[elut18_df.sum(axis=1) > 10]
-elut18_t10_rwn_df = elut18_t10_df.div(elut18_t10_df.max(axis=1), axis=0)
-elut18_t10_rsm_df = elut18_t10_df.div(elut18_t10_df.sum(axis=1), axis=0)
-elut18_t10_qtn_df = qnorm.quantile_normalize(elut18_t10_df, axis=0)
-
-elut19_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep1.elut", sep='\t')
-elut19_df = elut19_df.set_index('Unnamed: 0')
-elut19_t10_df = elut19_df[elut19_df.sum(axis=1) > 10]
-elut19_t10_rwn_df = elut19_t10_df.div(elut19_t10_df.max(axis=1), axis=0)
-elut19_t10_rsm_df = elut19_t10_df.div(elut19_t10_df.sum(axis=1), axis=0)
-elut19_t10_qtn_df = qnorm.quantile_normalize(elut19_t10_df, axis=0)
-
-elut20_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep2.elut", sep='\t')
-elut20_df = elut20_df.set_index('Unnamed: 0')
-elut20_t10_df = elut20_df[elut20_df.sum(axis=1) > 10]
-elut20_t10_rwn_df = elut20_t10_df.div(elut20_t10_df.max(axis=1), axis=0)
-elut20_t10_rsm_df = elut20_t10_df.div(elut20_t10_df.sum(axis=1), axis=0)
-elut20_t10_qtn_df = qnorm.quantile_normalize(elut20_t10_df, axis=0)
-
-elut21_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep3.elut", sep='\t')
-elut21_df = elut21_df.set_index('Unnamed: 0')
-elut21_t10_df = elut21_df[elut21_df.sum(axis=1) > 10]
-elut21_t10_rwn_df = elut21_t10_df.div(elut21_t10_df.max(axis=1), axis=0)
-elut21_t10_rsm_df = elut21_t10_df.div(elut21_t10_df.sum(axis=1), axis=0)
-elut21_t10_qtn_df = qnorm.quantile_normalize(elut21_t10_df, axis=0)
-
-elut22_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Larance_2016_PT3281S1.elut", sep='\t')
-elut22_df = elut22_df.set_index('Unnamed: 0')
-elut22_t10_df = elut22_df[elut22_df.sum(axis=1) > 10]
-elut22_t10_rwn_df = elut22_t10_df.div(elut22_t10_df.max(axis=1), axis=0)
-elut22_t10_rsm_df = elut22_t10_df.div(elut22_t10_df.sum(axis=1), axis=0)
-elut22_t10_qtn_df = qnorm.quantile_normalize(elut22_t10_df, axis=0)
-
-elut23_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Larance_2016_PT3441S1.elut", sep='\t')
-elut23_df = elut23_df.set_index('Unnamed: 0')
-elut23_t10_df = elut23_df[elut23_df.sum(axis=1) > 10]
-elut23_t10_rwn_df = elut23_t10_df.div(elut23_t10_df.max(axis=1), axis=0)
-elut23_t10_rsm_df = elut23_t10_df.div(elut23_t10_df.sum(axis=1), axis=0)
-elut23_t10_qtn_df = qnorm.quantile_normalize(elut23_t10_df, axis=0)
-
-elut24_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Larance_2016_PT3442S1.elut", sep='\t')
-elut24_df = elut24_df.set_index('Unnamed: 0')
-elut24_t10_df = elut24_df[elut24_df.sum(axis=1) > 10]
-elut24_t10_rwn_df = elut24_t10_df.div(elut24_t10_df.max(axis=1), axis=0)
-elut24_t10_rsm_df = elut24_t10_df.div(elut24_t10_df.sum(axis=1), axis=0)
-elut24_t10_qtn_df = qnorm.quantile_normalize(elut24_t10_df, axis=0)
-
-elut25_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Larance_2016_PT3701S1.elut", sep='\t')
-elut25_df = elut25_df.set_index('Unnamed: 0')
-elut25_t10_df = elut25_df[elut25_df.sum(axis=1) > 10]
-elut25_t10_rwn_df = elut25_t10_df.div(elut25_t10_df.max(axis=1), axis=0)
-elut25_t10_rsm_df = elut25_t10_df.div(elut25_t10_df.sum(axis=1), axis=0)
-elut25_t10_qtn_df = qnorm.quantile_normalize(elut25_t10_df, axis=0)
-
-elut26_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Larance_2016_PTSS3801.elut", sep='\t')
-elut26_df = elut26_df.set_index('Unnamed: 0')
-elut26_t10_df = elut26_df[elut26_df.sum(axis=1) > 10]
-elut26_t10_rwn_df = elut26_t10_df.div(elut26_t10_df.max(axis=1), axis=0)
-elut26_t10_rsm_df = elut26_t10_df.div(elut26_t10_df.sum(axis=1), axis=0)
-elut26_t10_qtn_df = qnorm.quantile_normalize(elut26_t10_df, axis=0)
-
-elut27_df = pd.read_csv(DATADIR_ELUT + "U2OS_cells_SEC_Larance_2016_PTSS3802.elut", sep='\t')
-elut27_df = elut27_df.set_index('Unnamed: 0')
-elut27_t10_df = elut27_df[elut27_df.sum(axis=1) > 10]
-elut27_t10_rwn_df = elut27_t10_df.div(elut27_t10_df.max(axis=1), axis=0)
-elut27_t10_rsm_df = elut27_t10_df.div(elut27_t10_df.sum(axis=1), axis=0)
-elut27_t10_qtn_df = qnorm.quantile_normalize(elut27_t10_df, axis=0)
-
-elut28_df = pd.read_csv(DATADIR_ELUT + "HEK_293_T_cells_SEC_Mallam_2019_C1.elut", sep='\t')
-elut28_df = elut28_df.set_index('Unnamed: 0')
-elut28_t10_df = elut28_df[elut28_df.sum(axis=1) > 10]
-elut28_t10_rwn_df = elut28_t10_df.div(elut28_t10_df.max(axis=1), axis=0)
-elut28_t10_rsm_df = elut28_t10_df.div(elut28_t10_df.sum(axis=1), axis=0)
-elut28_t10_qtn_df = qnorm.quantile_normalize(elut28_t10_df, axis=0)
-
-elut29_df = pd.read_csv(DATADIR_ELUT + "HEK_293_T_cells_SEC_Mallam_2019_C2.elut", sep='\t')
-elut29_df = elut29_df.set_index('Unnamed: 0')
-elut29_t10_df = elut29_df[elut29_df.sum(axis=1) > 10]
-elut29_t10_rwn_df = elut29_t10_df.div(elut29_t10_df.max(axis=1), axis=0)
-elut29_t10_rsm_df = elut29_t10_df.div(elut29_t10_df.sum(axis=1), axis=0)
-elut29_t10_qtn_df = qnorm.quantile_normalize(elut29_t10_df, axis=0)
-
-elut30_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_IEX_Moutaoufik_2019_R1.elut", sep='\t')
-elut30_df = elut30_df.set_index('Unnamed: 0')
-elut30_t10_df = elut30_df[elut30_df.sum(axis=1) > 10]
-elut30_t10_rwn_df = elut30_t10_df.div(elut30_t10_df.max(axis=1), axis=0)
-elut30_t10_rsm_df = elut30_t10_df.div(elut30_t10_df.sum(axis=1), axis=0)
-elut30_t10_qtn_df = qnorm.quantile_normalize(elut30_t10_df, axis=0)
-
-elut31_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_IEX_Moutaoufik_2019_R2.elut", sep='\t')
-elut31_df = elut31_df.set_index('Unnamed: 0')
-elut31_t10_df = elut31_df[elut31_df.sum(axis=1) > 10]
-elut31_t10_rwn_df = elut31_t10_df.div(elut31_t10_df.max(axis=1), axis=0)
-elut31_t10_rsm_df = elut31_t10_df.div(elut31_t10_df.sum(axis=1), axis=0)
-elut31_t10_qtn_df = qnorm.quantile_normalize(elut31_t10_df, axis=0)
-
-elut32_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_IEX_Moutafouik_2019_2_R1.elut", sep='\t')
-elut32_df = elut32_df.set_index('Unnamed: 0')
-elut32_t10_df = elut32_df[elut32_df.sum(axis=1) > 10]
-elut32_t10_rwn_df = elut32_t10_df.div(elut32_t10_df.max(axis=1), axis=0)
-elut32_t10_rsm_df = elut32_t10_df.div(elut32_t10_df.sum(axis=1), axis=0)
-elut32_t10_qtn_df = qnorm.quantile_normalize(elut32_t10_df, axis=0)
-
-elut33_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_IEX_Moutafouik_2019_2_R2.elut", sep='\t')
-elut33_df = elut33_df.set_index('Unnamed: 0')
-elut33_t10_df = elut33_df[elut33_df.sum(axis=1) > 10]
-elut33_t10_rwn_df = elut33_t10_df.div(elut33_t10_df.max(axis=1), axis=0)
-elut33_t10_rsm_df = elut33_t10_df.div(elut33_t10_df.sum(axis=1), axis=0)
-elut33_t10_qtn_df = qnorm.quantile_normalize(elut33_t10_df, axis=0)
-
-elut34_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutafouik_2019_R1.elut", sep='\t')
-elut34_df = elut34_df.set_index('Unnamed: 0')
-elut34_t10_df = elut34_df[elut34_df.sum(axis=1) > 10]
-elut34_t10_rwn_df = elut34_t10_df.div(elut34_t10_df.max(axis=1), axis=0)
-elut34_t10_rsm_df = elut34_t10_df.div(elut34_t10_df.sum(axis=1), axis=0)
-elut34_t10_qtn_df = qnorm.quantile_normalize(elut34_t10_df, axis=0)
-
-elut35_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutafouik_2019_R2.elut", sep='\t')
-elut35_df = elut35_df.set_index('Unnamed: 0')
-elut35_t10_df = elut35_df[elut35_df.sum(axis=1) > 10]
-elut35_t10_rwn_df = elut35_t10_df.div(elut35_t10_df.max(axis=1), axis=0)
-elut35_t10_rsm_df = elut35_t10_df.div(elut35_t10_df.sum(axis=1), axis=0)
-elut35_t10_qtn_df = qnorm.quantile_normalize(elut35_t10_df, axis=0)
-
-elut36_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutafouik_2019_2_R1.elut", sep='\t')
-elut36_df = elut36_df.set_index('Unnamed: 0')
-elut36_t10_df = elut36_df[elut36_df.sum(axis=1) > 10]
-elut36_t10_rwn_df = elut36_t10_df.div(elut36_t10_df.max(axis=1), axis=0)
-elut36_t10_rsm_df = elut36_t10_df.div(elut36_t10_df.sum(axis=1), axis=0)
-elut36_t10_qtn_df = qnorm.quantile_normalize(elut36_t10_df, axis=0)
-
-elut37_df = pd.read_csv(DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutafouik_2019_2_R2.elut", sep='\t')
-elut37_df = elut37_df.set_index('Unnamed: 0')
-elut37_t10_df = elut37_df[elut37_df.sum(axis=1) > 10]
-elut37_t10_rwn_df = elut37_t10_df.div(elut37_t10_df.max(axis=1), axis=0)
-elut37_t10_rsm_df = elut37_t10_df.div(elut37_t10_df.sum(axis=1), axis=0)
-elut37_t10_qtn_df = qnorm.quantile_normalize(elut37_t10_df, axis=0)
+# Define list of .elut training data filenames
+elut_data = [DATADIR_ELUT + "HEK293_EDTA_minus_SEC_control_20220626.elut",
+             DATADIR_ELUT + "HEK293_EDTA_plus_SEC_treatment_20220626_trimmed.elut",
+             DATADIR_ELUT + "Anna_HEK_urea_SEC_0M_050817_20220314b_trimmed.elut",
+             DATADIR_ELUT + "Anna_HEK_urea_SEC_0p5M_052317_20220315_reviewed_trimmed.elut",
+             DATADIR_ELUT + "Hs_helaN_1010_ACC.prot_count_mFDRpsm001.elut",
+             DATADIR_ELUT + "Hs_HCW_1.elut",
+             DATADIR_ELUT + "Hs_HCW_2.elut",
+             DATADIR_ELUT + "Hs_HCW_3.elut",
+             DATADIR_ELUT + "Hs_HCW_4.elut",
+             DATADIR_ELUT + "Hs_HCW_5.elut",
+             DATADIR_ELUT + "Hs_HCW_6.elut",
+             DATADIR_ELUT + "Hs_HCW_7.elut",
+             DATADIR_ELUT + "Hs_HCW_8.elut",
+             DATADIR_ELUT + "Hs_HCW_9.elut",
+             DATADIR_ELUT + "Hs_IEX_1.elut",
+             DATADIR_ELUT + "Hs_IEX_2.elut",
+             DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep1.elut",
+             DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep2.elut",
+             DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep3.elut",
+             DATADIR_ELUT + "HEK_293_T_cells_SEC_Mallam_2019_C1.elut",
+             DATADIR_ELUT + "HEK_293_T_cells_SEC_Mallam_2019_C2.elut",
+             DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutaoufik_2019_R1.elut",
+             DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutaoufik_2019_R2.elut",
+             DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutaoufik_2019_2_R1.elut",
+             DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutaoufik_2019_2_R2.elut"]
 
 
-'''
-elut_list = [elut1_t10_df, elut2_t10_df, elut3_t10_df, elut4_t10_df,
-             elut5_t10_df, elut6_t10_df, elut7_t10_df, elut8_t10_df,
-             elut9_t10_df, elut10_t10_df, elut11_t10_df, elut12_t10_df,
-             elut13_t10_df, elut14_t10_df, elut15_t10_df, elut16_t10_df,
-             elut14_t10_df, elut15_t10_df, elut16_t10_df, elut17_t10_df,
-             elut18_t10_df, elut19_t10_df, elut20_t10_df, elut21_t10_df,
-             elut22_t10_df, elut23_t10_df, elut24_t10_df, elut25_t10_df,
-             elut26_t10_df, elut27_t10_df, elut28_t10_df, elut29_t10_df,
-             elut30_t10_df, elut31_t10_df, elut32_t10_df, elut33_t10_df,
-             elut35_t10_df, elut36_t10_df, elut37_t10_df]
-elut_list = [elut1_t10_rwn_df, elut2_t10_rwn_df, elut3_t10_rwn_df,
-             elut4_t10_rwn_df, elut5_t10_rwn_df, elut4_t10_rwn_df,
-             elut5_t10_rwn_df, elut6_t10_rwn_df, elut7_t10_rwn_df,
-             elut8_t10_rwn_df, elut9_t10_rwn_df, elut10_t10_rwn_df,
-             elut11_t10_rwn_df, elut12_t10_rwn_df]
-'''
-elut_list = [elut1_t10_qtn_df, elut2_t10_qtn_df, elut3_t10_qtn_df,
-             elut4_t10_qtn_df, elut5_t10_qtn_df, elut4_t10_qtn_df,
-             elut5_t10_qtn_df, elut6_t10_qtn_df, elut7_t10_qtn_df,
-             elut8_t10_qtn_df, elut9_t10_qtn_df, elut10_t10_qtn_df,
-             elut11_t10_qtn_df, elut12_t10_qtn_df, elut13_t10_qtn_df,
-             elut14_t10_qtn_df, elut15_t10_qtn_df, elut16_t10_qtn_df,
-             elut17_t10_qtn_df, elut18_t10_qtn_df, elut19_t10_qtn_df,
-             elut20_t10_qtn_df, elut21_t10_qtn_df, elut22_t10_qtn_df,
-             elut23_t10_qtn_df, elut24_t10_qtn_df, elut25_t10_qtn_df,
-             elut26_t10_qtn_df, elut27_t10_qtn_df, elut28_t10_qtn_df,
-             elut29_t10_qtn_df, elut30_t10_qtn_df, elut31_t10_qtn_df,
-             elut32_t10_qtn_df, elut33_t10_qtn_df, elut34_t10_qtn_df,
-             elut35_t10_qtn_df, elut36_t10_qtn_df, elut37_t10_qtn_df]
+# Assemble list of preprocessed, normalized .elut dataframes
+elut_list = []
+for elut_file in elut_data:
+    print(f"Parsing \'{elut_file}\' ...")
+    elut_df = pd.read_csv(elut_file, sep='\t', index_col=0)
 
-'''           
-elut_list = [elut1_t10_rsm_df, elut2_t10_rsm_df, elut3_t10_rsm_df,
-             elut4_t10_rsm_df, elut5_t10_rsm_df, elut4_t10_rsm_df,
-             elut5_t10_rsm_df, elut6_t10_rsm_df, elut7_t10_rsm_df,
-             elut8_t10_rsm_df, elut9_t10_rsm_df, elut10_t10_rsm_df,
-             elut11_t10_rsm_df, elut12_t10_rsm_df, elut13_t10_rsm_df,
-             elut14_t10_rsm_df, elut15_t10_rsm_df, elut16_t10_rsm_df,
-             elut17_t10_rsm_df, elut18_t10_rsm_df, elut19_t10_rsm_df,
-             elut20_t10_rsm_df, elut21_t10_rsm_df, elut22_t10_rsm_df,
-             elut23_t10_rsm_df, elut24_t10_rsm_df, elut25_t10_rsm_df,
-             elut26_t10_rsm_df, elut27_t10_rsm_df, elut28_t10_rsm_df,
-             elut29_t10_rsm_df, elut30_t10_rsm_df, elut31_t10_rsm_df,
-             elut32_t10_rsm_df, elut33_t10_rsm_df, elut34_t10_rsm_df,
-             elut35_t10_rsm_df, elut36_t10_rsm_df, elut37_t10_rsm_df]
-'''
+    #elut_df = elut_df.set_index('Unnamed: 0')
+    elut_t10_df = elut_df[elut_df.sum(axis=1) >= 10]
+    # Row-max normalization (all values in elution trace divided by maximum value in that trace)
+    #elut_t10_rwn_df = elut_t10_df.div(elut_t10_df.max(axis=1), axis=0)
+
+    # Row-sum normalization (all values in elution trace divided by total PSMs in that trace)
+    #elut_t10_rsm_df = elut_t10_df.div(elut_t10_df.sum(axis=1), axis=0)
+
+    # Quantile normalization (quantiles of all traces in .elut file are aligned)
+    elut_t10_qtn_df = qnorm.quantile_normalize(elut_t10_df, axis=0)
+
+    # Add normalized dataframe to list containing elution data
+    elut_list.append(elut_t10_qtn_df)
+
+
 print("Elution data obtained. Now preparing ...")
-
 
 
 # Obtain set of all unique proteins across all elution data
@@ -464,11 +206,11 @@ elut_proteins = set()
 for ed in elut_list:
     elut_proteins = elut_proteins.union(ed.index)
 
-
-# Only keep protein pairs contained within the elution dataframe
+# Only keep protein pairs contained within the elution training data
 trainingelut_pos_ppis = []
 for i in training_pos_ppis:
     if len(i.intersection(elut_proteins)) == 2:
+
         trainingelut_pos_ppis.append(i)
 
 trainingelut_neg_ppis = []
@@ -548,8 +290,20 @@ class elutionPairDataset(Dataset):
             # miles: Loading the elut dataframe as a set vastly reduces runtime of dataset initialization
             elut_df_index = set(elut_df.index)
 
-            pos_ppis_elut = [(tuple(pppi.intersection(elut_df_index)), pppi) for pppi in pos_ppis if len(pppi.intersection(elut_df_index)) == 2]
-            neg_ppis_elut = [(tuple(nppi.intersection(elut_df_index)), nppi) for nppi in neg_ppis if len(nppi.intersection(elut_df_index)) == 2]
+            pos_ppis_elut = [pppi for pppi in pos_ppis if len(pppi.intersection(elut_df_index)) == 2]
+            neg_ppis_elut = [nppi for nppi in neg_ppis if len(nppi.intersection(elut_df_index)) == 2]
+
+            # Remove low-Pearson samples from positive PPIs
+            pos_ppis_elut = [pppi for pppi in pos_ppis_elut if scipy.stats.pearsonr(
+                torch.from_numpy(elut_df.T[list(pppi)[0]].values).float(),
+                torch.from_numpy(elut_df.T[list(pppi)[1]].values).float())[0] >= 0.5]
+
+            #if len(pos_ppis_elut) == 0:
+            #    print(f"WARNING: .elut file {elut_id} conttains no positive PPIs!")
+            #    exit()
+            #if len(neg_ppis_elut) == 0:
+            #    print(f"WARNING: .elut file {elut_id} contains no negative PPIs!")
+            #    exit()
 
             self.ppis = self.ppis + pos_ppis_elut + neg_ppis_elut
             self.labels = self.labels + [0]*len(pos_ppis_elut) + [1]*len(neg_ppis_elut)
@@ -559,15 +313,15 @@ class elutionPairDataset(Dataset):
         self.input_size = input_size
 
     def __getitem__(self, index):
-        pair = self.ppis[index]
+        pair = list(self.ppis[index])
         elut_id = self.ppis_elut_ids[index]
         elut_df = self.elut_df_list[elut_id]
 
-        prot0 = pair[0][0]
-        prot1 = pair[0][1]
+        prot0 = pair[0]
+        prot1 = pair[1]
 
-        elut0 = (prot0, torch.from_numpy(elut_df.T[list(pair[1])[0]].values).float())
-        elut1 = (prot1, torch.from_numpy(elut_df.T[list(pair[1])[1]].values).float())
+        elut0 = (prot0, torch.from_numpy(elut_df.T[pair[0]].values).float())
+        elut1 = (prot1, torch.from_numpy(elut_df.T[pair[1]].values).float())
 
         if self.transform:
             elut0 = (prot0, nn.functional.pad(elut0[1], (self.input_size - elut0[1].size()[0], 0)))
@@ -576,7 +330,7 @@ class elutionPairDataset(Dataset):
         elut0 = (elut0[0], elut0[1].unsqueeze(0))
         elut1 = (elut1[0], elut1[1].unsqueeze(0))
 
-        return elut0, elut1, self.labels[index]
+        return elut0, elut1, self.labels[index], elut_id
 
     def __len__(self):
         return len(self.ppis)
@@ -622,12 +376,6 @@ vis_dataloader = DataLoader(train_siamese_dataset,
                             num_workers=NUM_THREAD,
                             batch_size=8)
 
-# One batch is a list containing 2x8 images, indexes 0 and 1, and the label
-# If label is 1, NOT the same object in images
-# If label is 0, SAME object in both images
-#concatenated = torch.cat((example_batch[0], example_batch[1]), 0)
-#imshow(torchvision.utils.make_grid(concatenated))
-
 
 # Define the siamese neural network
 class siameseNet(nn.Module):
@@ -642,34 +390,49 @@ class siameseNet(nn.Module):
         self.cnn1 = nn.Sequential(
                 nn.Conv1d(in_channels=1, out_channels=4,
                           kernel_size=3, stride=1, padding=1),
+                #nn.MaxPool1d(2),
                 nn.BatchNorm1d(4),
-                nn.ReLU(inplace=True),
+                #nn.ReLU(inplace=True),
+                nn.ELU(inplace=True),
 
                 nn.Conv1d(in_channels=4, out_channels=16,
                           kernel_size=3, stride=1, padding=1),
+                #nn.MaxPool1d(2),
                 nn.BatchNorm1d(16),
-                nn.ReLU(inplace=True),
+                #nn.ReLU(inplace=True),
+                nn.ELU(inplace=True),
 
                 nn.Conv1d(in_channels=16, out_channels=32,
                           kernel_size=3, stride=1, padding=1),
+                #nn.MaxPool1d(2),
                 nn.BatchNorm1d(32),
-                nn.ReLU(inplace=True),
+                #nn.ReLU(inplace=True),
+                nn.ELU(inplace=True),
         )
 
-        self.rnn = nn.LSTM(input_size=32, hidden_size=hidden_size, num_layers=1,
+        self.rnn = nn.LSTM(input_size=32, hidden_size=16, num_layers=1,
                            bidirectional=True, batch_first=True)
 
         self.tns = nn.TransformerEncoder(
-                nn.TransformerEncoderLayer(d_model=32,
+                nn.TransformerEncoderLayer(d_model=1, activation='gelu',
                                            nhead=1, dim_feedforward=hidden_size,
                                            batch_first=True),
-                num_layers=3
+                num_layers=6
         )
 
         self.cnn2 = nn.Sequential(
-                nn.ConvTranspose1d(in_channels=2*hidden_size, out_channels=1,
+                #nn.ConvTranspose1d(in_channels=64, out_channels=1,
+                #                   kernel_size=3, stride=1, padding=1),
+                #nn.ReLU(inplace=True),
+
+                #nn.ConvTranspose1d(in_channels=16, out_channels=4,
+                #                   kernel_size=3, stride=1, padding=1),
+                #nn.ReLU(inplace=True),
+
+                nn.ConvTranspose1d(in_channels=32, out_channels=1,
                                    kernel_size=1),
-                nn.ReLU(inplace=True),
+                #nn.ReLU(inplace=True),
+                nn.ELU(inplace=True),
         )
 
         self.fc1 = nn.Sequential(
@@ -695,10 +458,10 @@ class siameseNet(nn.Module):
 
         # Prepare for recurrent layers
         #print(y.shape)
-        y = y.permute(0, 2, 1)
+        #y = x.permute(0, 2, 1)
 
         # Apply bidirectional recurrency
-        y, _ = self.rnn(y)
+        #y, _ = self.rnn(y)
 
         # Apply transformer layer
         #print(y.shape)
@@ -706,7 +469,7 @@ class siameseNet(nn.Module):
 
         # Prepare for convolutional decoding
         #print(y.shape)
-        y = y.permute(0, 2, 1)
+        #y = y.permute(0, 2, 1)
 
         # Apply convolutional decoding
         #print(y.shape)
@@ -721,7 +484,7 @@ class siameseNet(nn.Module):
 
         # Apply fully connected layer
         # Potentiall add Pearson correlation coefficient here
-        y = self.fc1(y)
+        #y = self.fc1(y)
 
         return y
 
@@ -733,9 +496,8 @@ class siameseNet(nn.Module):
         return output1, output2
 
 # Define contrastive loss function, using Euclidean distance
-# TODO: Double check integrity of this function
 class contrastiveLossEuclidean(torch.nn.Module):
-    def __init__(self, margin=2.0):
+    def __init__(self, margin=1.0):
         super(contrastiveLossEuclidean, self).__init__()
         self.margin = margin
 
@@ -754,12 +516,13 @@ class contrastiveLossCosineDistance(nn.Module):
         self.tau = tau
 
     def forward(self, output1, output2, label):
-        cos_dist = 1.0 - F.cosine_similarity(output1, output2)
+        cos_sim = F.cosine_similarity(output1, output2)
+
+        cos_dist = 1.0 - cos_sim
         cos_dist_t = cos_dist / self.tau
 
-        loss = torch.mean((1-label) * torch.pow(cos_dist_t, 2) +
-                          (label) * torch.pow(torch.clamp(self.margin -
-                                              cos_dist_t, min=0.0), 2))
+        loss = torch.mean((1-label) * cos_dist_t +
+                          (label) * torch.clamp(self.margin - cos_dist_t, min=0.0))
         return loss
 
 
@@ -814,17 +577,8 @@ criterion = contrastiveLossEuclidean(margin=MARGIN)
 
 
 # Choose optimizer algorithm
-# miles: Notes
-#   - Adam
-#     - Easy, optimizes multiple parameters separately from one another
-#     - Literature shows that it generalizes far worse than SGD longterm
-#
-#   - SGD
-#     - Difficult, requires lots of hyper-parameter tuning to get working
-#     - Potentially generalizes far better. Should eventually use this one.
-
-#optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
-optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
+optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
+#optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
 
 # Choose learning rate scheduler
 # miles: ReduceLROnPlateau works great dynamically, StepLR good for exploring ruggedness
@@ -833,12 +587,10 @@ scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, f
 #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.1)
 
 # Zero the gradients
-optimizer.zero_grad()
+#optimizer.zero_grad()
 
 counter = []
 loss_hist = []
-valid_counter = []
-valid_loss_hist = []
 epoch_hist = []
 avg_test_loss_hist = []
 avg_valid_loss_hist = []
@@ -855,7 +607,7 @@ def weights_init(m):
     if isinstance(m, nn.Conv1d):
         torch.nn.init.xavier_uniform_(m.weight.data)                 
 
-#net.apply(weights_init)
+net.apply(weights_init)
 
 
 # Training loop
@@ -877,7 +629,7 @@ if trainNet:
         net.train()
         train_loss = 0
         num_batches = len(train_dataloader)
-        for i, (elut0, elut1, label) in enumerate(train_dataloader, 0):
+        for i, (elut0, elut1, label, elut_id) in enumerate(train_dataloader, 0):
             pccList = []
 
             # Obtain protein IDs
@@ -923,7 +675,7 @@ if trainNet:
         net.eval()
         valid_loss = 0.0
         num_batches_valid = len(valid_dataloader)
-        for valid_i, (valid_elut0, valid_elut1, valid_label) in enumerate(valid_dataloader, 0):
+        for valid_i, (valid_elut0, valid_elut1, valid_label, valid_elut_id) in enumerate(valid_dataloader, 0):
             pccListValid = []
 
             # Obtain protein IDs
@@ -946,12 +698,9 @@ if trainNet:
             valid_loss += valid_loss_contrastive.item()
 
             # Update validation loss series for plotting
-            if valid_i % SAMPLE_RATE == 0:
-                print(f"  Batch [{valid_i} / {num_batches_valid}] Validation Loss: {valid_loss_contrastive.item()}")
-                valid_iteration_num += SAMPLE_RATE
-
-                valid_counter.append(valid_iteration_num)
-                valid_loss_hist.append(valid_loss_contrastive.item())
+            if valid_i % 5 == 0 and valid_i > 0:
+                avg_valid_loss = valid_loss / valid_i
+                print(f"Now running model on validation set ... {valid_i * 100 / len(valid_dataloader):.4f} %  |  Avg. Loss: {avg_valid_loss}", end='\r')
 
         # Obtain the average validation set loss per batch
         avg_valid_loss = valid_loss / len(valid_dataloader)
@@ -970,7 +719,7 @@ if trainNet:
 
         with torch.no_grad():
             test_loss = 0.0
-            for test_i, (test_elut0, test_elut1, test_label) in enumerate(test_dataloader, 0):
+            for test_i, (test_elut0, test_elut1, test_label, test_elut_id) in enumerate(test_dataloader, 0):
                 pccListTest = []
                 # Obtain protein IDs
                 prot0, prot1 = elut0[0], elut1[0]
@@ -991,8 +740,9 @@ if trainNet:
                 # Add to total test loss
                 test_loss += loss_test_contrastive
 
-                if test_i % 5 == 0:
-                    print(f"Now running model on test set ... {test_i * 100 / len(test_dataloader):.4f} %", end='\r')
+                if test_i % 5 == 0 and test_i > 0:
+                    avg_test_loss = test_loss / test_i
+                    print(f"Now running model on test set ... {test_i * 100 / len(test_dataloader):.4f} %  |  Avg. Loss {avg_test_loss}", end='\r')
 
         # Calculate average loss on test dataset
         avg_test_loss = test_loss / len(test_dataloader)
@@ -1025,305 +775,298 @@ if trainNet:
 # Save the model weights
 torch.save(net.state_dict(), PARAMETER_FILENAME)
 
-# TEST EUCLIDEAN
-test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
-                                                   pos_ppis=test_pos_ppis,
-                                                   neg_ppis=[],
-                                                   transform=True)
-subset_indices = torch.randperm(len(test_pos_elution_pair_dataset))[:SUBSET_SIZE]
-subset_test_pos_elution_pair_dataset = Subset(test_pos_elution_pair_dataset, subset_indices)
 
-if __FAST_VALID_TEST__:
-    test_pos_dataloader = DataLoader(subset_test_pos_elution_pair_dataset,
-                                     num_workers=1,
-                                     batch_size=1,
-                                     shuffle=True)
-else:
-    test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset,
-                                     num_workers=1,
-                                     batch_size=1,
-                                     shuffle=True)
+for k, elut in enumerate(elut_list):
+    # Run model and Pearson on positive PPIs only
+    test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=[elut],
+                                                       pos_ppis=test_pos_ppis,
+                                                       neg_ppis=[],
+                                                       transform=True)
+    print(len(test_pos_elution_pair_dataset))
 
-# Construct a list of euclidean distances between two positive protein pairs
-# We want these to be smaller, as the network should recognize their similarity
-pos_ppi_euclidean_dist_list = []
-pos_ppi_conf_output_file = open("pos_ppi_conf.txt", 'w')
-pos_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
-pos_ppi_conf_list = []
-pos_ppi_lab_list = []
-for i, (pos_elut0, pos_elut1, pos_label) in enumerate(test_pos_dataloader):
-    pccListPos = []
+    subset_indices = torch.randperm(len(test_pos_elution_pair_dataset))[:SUBSET_SIZE]
+    subset_test_pos_elution_pair_dataset = Subset(test_pos_elution_pair_dataset, subset_indices)
 
-    # Obtain protein IDs
-    prot0, prot1 = pos_elut0[0], pos_elut1[0]
+    if __FAST_VALID_TEST__:
+        test_pos_dataloader = DataLoader(subset_test_pos_elution_pair_dataset,
+                                         num_workers=1,
+                                         batch_size=1)
+    else:
+        test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset,
+                                         num_workers=1,
+                                         batch_size=1)
 
-    # Obtain Pearson correlation
-    for pos_ppi0, pos_ppi1 in zip(pos_elut0[1], pos_elut1[1]):
-         pccListPos.append(scipy.stats.pearsonr(pos_ppi0[0], pos_ppi1[0])[0])
-    pcc = torch.tensor(pccListPos, dtype=torch.float32).cuda()
+    pos_ppi_euclidean_dist_list = []
+    pos_ppi_pearson_list = []
+    pos_ppi_conf_output_file = open(f"pos_ppi_conf_{k+1}.txt", 'w')
+    pos_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
+    pos_ppi_conf_list = []
+    pos_ppi_lab_list = []
+    if len(test_pos_elution_pair_dataset) > 0:
+        for i, (pos_elut0, pos_elut1, pos_label, elut_id) in enumerate(test_pos_dataloader):
 
-    # Obtain elution traces
-    pos_elut0, pos_elut1 = pos_elut0[1], pos_elut1[1]
+            # Obtain protein IDs
+            prot0, prot1 = pos_elut0[0], pos_elut1[0]
 
-    # Run model on data
-    output1, output2 = net(pos_elut0.cuda(), pos_elut1.cuda(), pcc)
+            # Obtain elution traces
+            pos_elut0, pos_elut1 = pos_elut0[1], pos_elut1[1]
 
-    # Get Euclidean distance b/t model outputs
-    euclidean_dist = F.pairwise_distance(output1, output2)
+            # Obtain Pearson correlation
+            pos_ppi_pearson_list.append(scipy.stats.pearsonr(pos_elut0[0][0], pos_elut1[0][0])[0])
 
-    # Get confidence score of similarity based on Euclidean distance
-    confidence = euclidean_to_confidence(euclidean_dist, 12.0, SENSITIVITY)
+            # Run model on data
+            output1, output2 = net(pos_elut0.cuda(), pos_elut1.cuda(), pos_ppi_pearson_list[0])
 
-    # Write prediction to text file, with following line-wise format
-    #   prot1:prot2 euc_dist confidence label
-    pos_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{pccListPos[0]:.4f}\t{confidence.item():.4f}\n")
+            # Get Euclidean distance b/t model outputs
+            euclidean_dist = F.pairwise_distance(output1, output2)
 
-    pos_ppi_euclidean_dist_list.append(euclidean_dist.item())
-    pos_ppi_conf_list.append(confidence.item())
-    pos_ppi_lab_list.append(pos_label.item())
-    
-    if i % 5 == 0:
-        print(f"Calculating Euclidean distances for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
-pos_ppi_conf_output_file.close()
-print("Calculating Euclidean distances for positive pairwise interactions ... done      ")
+            # Get confidence score of similarity based on Euclidean distance
+            confidence = euclidean_to_confidence(euclidean_dist, MAX_ED, SENSITIVITY)
 
-# Test only negative ppis
-test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
-                                                   pos_ppis=[],
-                                                   neg_ppis=test_neg_ppis,
-                                                   transform=True)
-subset_indices = torch.randperm(len(test_neg_elution_pair_dataset))[:SUBSET_SIZE]
-subset_test_neg_elution_pair_dataset = Subset(test_neg_elution_pair_dataset, subset_indices)
+            # Write prediction to text file, with following line-wise format
+            #   prot1:prot2 euc_dist confidence label
+            pos_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{pos_ppi_pearson_list[0]:.4f}\t{confidence.item():.4f}\t{elut_id}\n")
 
-if __FAST_VALID_TEST__:
-    test_neg_dataloader = DataLoader(subset_test_neg_elution_pair_dataset,
-                                     num_workers=1,
-                                     batch_size=1,
-                                     shuffle=True)
-else:
-    test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset,
-                                     num_workers=1,
-                                     batch_size=1,
-                                     shuffle=True)
+            pos_ppi_euclidean_dist_list.append(euclidean_dist.item())
+            pos_ppi_conf_list.append(confidence.item())
+            pos_ppi_lab_list.append(pos_label.item())
+        
+            if i % 5 == 0:
+                print(f"Calculating Euclidean distances, Pearson scores for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
+        #pos_ppi_conf_output_file.close()
+        print("Calculating Euclidean distances, Pearson scores for positive pairwise interactions ... done            ")
+    else:
+        print("Dataset is empty!")
 
-# Construct a list of euclidean distances between two negative protein pairs
-# We want these to be larger, as the network should recognize their dissimilarity
-neg_ppi_euclidean_dist_list = []
-neg_ppi_conf_output_file = open("neg_ppi_conf.txt", 'w')
-neg_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
-neg_ppi_conf_list = []
-neg_ppi_lab_list = []
-for i, (neg_elut0, neg_elut1, neg_label) in enumerate(test_neg_dataloader):
-    pccListNeg = []
+    # Run model and Pearson on negative PPIs only
+    test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=[elut],
+                                                       pos_ppis=[],
+                                                       neg_ppis=test_neg_ppis,
+                                                       transform=True)
+    subset_indices = torch.randperm(len(test_neg_elution_pair_dataset))[:SUBSET_SIZE]
+    subset_test_neg_elution_pair_dataset = Subset(test_neg_elution_pair_dataset, subset_indices)
 
-    # Obtain protein IDs
-    prot0, prot1 = neg_elut0[0], neg_elut1[0]
+    if __FAST_VALID_TEST__:
+        test_neg_dataloader = DataLoader(subset_test_neg_elution_pair_dataset,
+                                         num_workers=1,
+                                         batch_size=1)
+    else:
+        test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset,
+                                         num_workers=1,
+                                         batch_size=1)
 
-    # Obtain Pearson correlation
-    for neg_ppi0, neg_ppi1 in zip(neg_elut0[1], neg_elut1[1]):
-         pccListNeg.append(scipy.stats.pearsonr(neg_ppi0[0], neg_ppi1[0])[0])
-    pcc = torch.tensor(pccListNeg, dtype=torch.float32).cuda()
+    # Iterate over negative samples, getting Pearson scores and post-transform Euclidean distance for each PPI
+    neg_ppi_euclidean_dist_list = []
+    neg_ppi_pearson_list = []
+    neg_ppi_conf_output_file = open(f"neg_ppi_conf_{k+1}.txt", 'w')
+    neg_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
+    neg_ppi_conf_list = []
+    neg_ppi_lab_list = []
+    for i, (neg_elut0, neg_elut1, neg_label, elut_id) in enumerate(test_neg_dataloader):
 
-    # Obtain elution traces
-    neg_elut0, neg_elut1 = neg_elut0[1], neg_elut1[1]
+        # Obtain protein IDs
+        prot0, prot1 = neg_elut0[0], neg_elut1[0]
 
-    # Run model on data
-    output1, output2 = net(neg_elut0.cuda(), neg_elut1.cuda(), pcc)
+        # Obtain elution traces
+        neg_elut0, neg_elut1 = neg_elut0[1], neg_elut1[1]
 
-    # Get Euclidean distance b/t model outputs
-    euclidean_dist = F.pairwise_distance(output1, output2)
+        # Obtain Pearson correlation
+        neg_ppi_pearson_list.append(scipy.stats.pearsonr(neg_elut0[0][0], neg_elut1[0][0])[0])
 
-    # Get confidence score of similarity based on Euclidean distance
-    confidence = euclidean_to_confidence(euclidean_dist, 10.0, SENSITIVITY)
-    neg_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{pccListNeg[0]:.4f}\t{confidence.item():.4f}\n")
+        # Run model on data
+        output1, output2 = net(neg_elut0.cuda(), neg_elut1.cuda(), neg_ppi_pearson_list[0])
 
-    neg_ppi_euclidean_dist_list.append(euclidean_dist.item())
-    neg_ppi_conf_list.append(confidence.item())
-    neg_ppi_lab_list.append(neg_label.item())
+        # Get Euclidean distance b/t model outputs
+        euclidean_dist = F.pairwise_distance(output1, output2)
 
-    if i % 5 == 0:
-        print(f"Calculating Euclidean distances for negative pairwise interactions ... {i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
-neg_ppi_conf_output_file.close()
-print("Calculating Euclidean distances for negative pairwise interactions ... done      ")
+        # Get confidence score of similarity based on Euclidean distance
+        confidence = euclidean_to_confidence(euclidean_dist, MAX_ED, SENSITIVITY)
+        neg_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{neg_ppi_pearson_list[0]:.4f}\t{confidence.item():.4f}\t{elut_id}\n")
 
-# Plot the PDF of the euclidean distance between positive and negative protein pairs
-x = np.linspace(-5,20,1000)
-mean_pos = np.mean(pos_ppi_euclidean_dist_list)
-mean_neg = np.mean(neg_ppi_euclidean_dist_list)
-diff_means_pos_neg_pdf = abs(mean_neg - mean_pos)
-y = norm.pdf(x, loc=mean_neg, scale=np.std(neg_ppi_euclidean_dist_list))
-y2 = norm.pdf(x, loc=mean_pos, scale=np.std(pos_ppi_euclidean_dist_list))
+        neg_ppi_euclidean_dist_list.append(euclidean_dist.item())
+        neg_ppi_conf_list.append(confidence.item())
+        neg_ppi_lab_list.append(neg_label.item())
 
-pylab.plot(x,y,label="negative_pairs")
-pylab.plot(x,y2,label="positive_pairs")
-pylab.annotate(f"{mean_pos}", (0.0, mean_pos))
-pylab.title("PDFs of Euclidean distances after model transform")
-pylab.legend()
-pylab.grid()
-pylab.savefig("pos_neg_pairs_EUCLIDEAN.png")
-pylab.clf()
-pylab.cla()
+        if i % 5 == 0:
+            print(f"Calculating Euclidean distances, Pearson scores for negative pairwise interactions ... {i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
+    neg_ppi_conf_output_file.close()
+    print("Calculating Euclidean distances, Pearson scores for negative pairwise interactions ... done            ")
+
+    # Plot the PDF of the euclidean distance between positive and negative protein pairs
+    x = np.linspace(-5,5,1000)
+    mean_pos = np.mean(pos_ppi_euclidean_dist_list)
+    mean_neg = np.mean(neg_ppi_euclidean_dist_list)
+    diff_means_pos_neg_pdf = abs(mean_neg - mean_pos)
+    y = norm.pdf(x, loc=mean_neg, scale=np.std(neg_ppi_euclidean_dist_list))
+    y2 = norm.pdf(x, loc=mean_pos, scale=np.std(pos_ppi_euclidean_dist_list))
+
+    pylab.plot(x,y,label="negative_pairs")
+    pylab.plot(x,y2,label="positive_pairs")
+    pylab.annotate(f"{mean_pos}", (0.0, mean_pos))
+    pylab.title("PDFs of Euclidean distances after model transform")
+    pylab.legend()
+    pylab.grid()
+    pylab.savefig(f"pos_neg_pairs_EUCLIDEAN_{k+1}.png")
+    pylab.clf()
+    pylab.cla()
 
 
-sns.histplot(neg_ppi_euclidean_dist_list, alpha=0.5,
-             label='negative pairs')
-sns.histplot(pos_ppi_euclidean_dist_list, alpha=0.5, bins=25,
-             label='positive pairs', color='orange')
-plt.title("Euclidean distance counts")
-plt.legend()
-plt.grid()
-plt.savefig("fig_hist_EUCLIDEAN.png")
-pylab.clf()
-pylab.cla()
+    sns.histplot(neg_ppi_euclidean_dist_list, alpha=0.5,
+                 label='negative pairs')
+    sns.histplot(pos_ppi_euclidean_dist_list, alpha=0.5, bins=25,
+                 label='positive pairs', color='orange')
+    plt.title("Euclidean distance counts")
+    plt.legend()
+    plt.grid()
+    plt.savefig(f"fig_hist_EUCLIDEAN_{k+1}.png")
+    pylab.clf()
+    pylab.cla()
+
+    # Obtain Pearson correlation between protein pairs
+    '''
+    pos_ppi_pearson_list = []
+    for i, (elut0, elut1, label, elut_id) in enumerate(test_pos_dataloader):
+        prot0, prot1 = elut0[0], elut1[0]
+        elut0, elut1 = elut0[1], elut1[1]
+        pos_ppi_pearson_list.append(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
+
+        if i % 5 == 0:
+            print(f"Calculating Pearson scores for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
+    print("Calculating Pearson scores for positive pairwise interactions ... done      ")
+
+    neg_ppi_pearson_list = []
+    for i, (elut0, elut1, label, elut_id) in enumerate(test_neg_dataloader):
+        prot0, prot1 = elut0[0], elut1[0]
+        elut0, elut1 = elut0[1], elut1[1]
+        neg_ppi_pearson_list.append(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
+
+        if i % 5 == 0:
+            print(f"Calculating Pearson scores for negative pairwise interactions ... {i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
+    print("Calculating Pearson scores for negative pairwise interactions ... done      ")
+    '''
 
 
-# TEST PEARSON
-# Obtain Pearson correlation between protein pairs
-pos_ppi_pearson_list = []
-for i, (elut0, elut1, label) in enumerate(test_pos_dataloader):
-    prot0, prot1 = elut0[0], elut1[0]
-    elut0, elut1 = elut0[1], elut1[1]
-    pos_ppi_pearson_list.append(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
+    # Plot the PDFs of the Pearson scores
+    x = np.linspace(-2, 2, 1000)
+    y = norm.pdf(x, loc=np.mean(neg_ppi_pearson_list), scale=np.std(neg_ppi_pearson_list))
+    y2 = norm.pdf(x, loc=np.mean(pos_ppi_pearson_list), scale=np.std(pos_ppi_pearson_list))
+    plt.plot(x,y,label="pearson_negative_pairs")
+    plt.plot(x,y2,label="pearson_positive_pairs")
+    plt.title("PDFs of Pearson scores")
+    plt.legend()
+    plt.grid()
+    plt.savefig(f"pos_neg_pairs_PEARSON_{k+1}.png")
+    plt.clf()
+    plt.cla()
 
-    if i % 5 == 0:
-        print(f"Calculating Pearson scores for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
-print("Calculating Pearson scores for positive pairwise interactions ... done      ")
+    # Plot the counts of positive/negative Pearson scores
+    sns.histplot(neg_ppi_pearson_list, alpha=0.5,
+                 label='negative pairs')
+    sns.histplot(pos_ppi_pearson_list, alpha=0.5, bins=50,
+                 label='positive pairs', color='orange')
+    plt.title(f"Pearson score counts")
+    plt.legend()
+    plt.grid()
+    plt.savefig(f"fig_hist_PEARSON_{k+1}.png")
+    pylab.clf()
+    pylab.cla()
 
-neg_ppi_pearson_list = []
-for i, (elut0, elut1, label) in enumerate(test_neg_dataloader):
-    prot0, prot1 = elut0[0], elut1[0]
-    elut0, elut1 = elut0[1], elut1[1]
-    neg_ppi_pearson_list.append(scipy.stats.pearsonr(elut0[0][0], elut1[0][0])[0])
+    # Plot the euclidean distance against the Pearson score
+    data_pearson_euclidean = {
+            'Euclidean Distance': pos_ppi_euclidean_dist_list + neg_ppi_euclidean_dist_list,
+            'Pearson Score': pos_ppi_pearson_list + neg_ppi_pearson_list,
+            'Label': ['Positive'] * len(pos_ppi_euclidean_dist_list) +
+                     ['Negative'] * len(neg_ppi_euclidean_dist_list)
+    }
 
-    if i % 5 == 0:
-        print(f"Calculating Pearson scores for negative pairwise interactions ... {i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
-print("Calculating Pearson scores for negative pairwise interactions ... done      ")
+    df_pearson_euclidean = pd.DataFrame(data_pearson_euclidean).reset_index()
+    df_pearson_euclidean = df_pearson_euclidean.melt(id_vars=['Label', 'Euclidean Distance', 'Pearson Score'])
 
+    # Plot the pearson scores for positive PPIs against the euclidean score
+    #   Euclidean distance should be small, preferably as close to 0 as possible
+    scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list, s=10)
+    scat1.set_xlim(-1, 12)
+    fig_scat1 = scat1.get_figure()
+    fig_scat1.savefig(f"pearson_ed_pos_scatter_{k+1}.png")
+    fig_scat1.clf()
 
+    # Plot a contour graph of the positive PPIs
+    #   We want to make the glob near (0, 0) larger
+    kde1 = sns.kdeplot(data=df_pearson_euclidean, x='Euclidean Distance', y='Pearson Score',
+                       common_norm=False, hue='Label', levels=15)
+    kde1.set_xlim(-1, 12)
+    fig_kde1 = kde1.get_figure()
+    fig_kde1.savefig(f"pearson_ed_contour_{k+1}.png")
+    fig_kde1.clf()
 
-# Plot the PDFs of the Pearson scores
-x = np.linspace(-2, 2, 1000)
-y = norm.pdf(x, loc=np.mean(neg_ppi_pearson_list), scale=np.std(neg_ppi_pearson_list))
-y2 = norm.pdf(x, loc=np.mean(pos_ppi_pearson_list), scale=np.std(pos_ppi_pearson_list))
-
-plt.plot(x,y,label="pearson_negative_pairs")
-plt.plot(x,y2,label="pearson_positive_pairs")
-plt.title("PDFs of Pearson scores")
-plt.legend()
-plt.grid()
-plt.savefig("pos_neg_pairs_PEARSON.png")
-plt.clf()
-plt.cla()
-
-# Plot the counts of positive/negative Pearson scores
-sns.histplot(neg_ppi_pearson_list, alpha=0.5,
-             label='negative pairs')
-sns.histplot(pos_ppi_pearson_list, alpha=0.5, bins=50,
-             label='positive pairs', color='orange')
-plt.title("Pearson score counts")
-plt.legend()
-plt.grid()
-plt.savefig("fig_hist_PEARSON.png")
-pylab.clf()
-pylab.cla()
-
-# Plot the euclidean distance against the Pearson score
-data_pearson_euclidean = {
-        'Euclidean Distance': pos_ppi_euclidean_dist_list + neg_ppi_euclidean_dist_list,
-        'Pearson Score': pos_ppi_pearson_list + neg_ppi_pearson_list,
-        'Label': ['Positive'] * len(pos_ppi_euclidean_dist_list) +
-                 ['Negative'] * len(neg_ppi_euclidean_dist_list)
-}
-
-df_pearson_euclidean = pd.DataFrame(data_pearson_euclidean).reset_index()
-df_pearson_euclidean = df_pearson_euclidean.melt(id_vars=['Label', 'Euclidean Distance', 'Pearson Score'])
-
-# Plot the pearson scores for positive PPIs against the euclidean score
-#   Euclidean distance should be small, preferably as close to 0 as possible
-scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list, s=10)
-scat1.set_xlim(-1, 12)
-fig_scat1 = scat1.get_figure()
-fig_scat1.savefig("pearson_vs_euc_scatter.png")
-fig_scat1.clf()
-
-# Plot a contour graph of the positive PPIs
-#   We want to make the glob near (0, 0) larger
-kde1 = sns.kdeplot(data=df_pearson_euclidean, x='Euclidean Distance', y='Pearson Score',
-                   common_norm=False, hue='Label', levels=15)
-kde1.set_xlim(-1, 12)
-fig_kde1 = kde1.get_figure()
-fig_kde1.savefig("pearson_vs_euc_kde.png")
-fig_kde1.clf()
-
-# Get labels, confidences, Euclidean distances, Pearson coefficients of test points
-y_labels = pos_ppi_lab_list + neg_ppi_lab_list
-y_confs = pos_ppi_conf_list + neg_ppi_conf_list
-y_dists = pos_ppi_euclidean_dist_list + neg_ppi_euclidean_dist_list
-y_pearson = pos_ppi_pearson_list + neg_ppi_pearson_list
+    # Get labels, confidences, Euclidean distances, Pearson coefficients of test points
+    y_labels = pos_ppi_lab_list + neg_ppi_lab_list
+    y_confs = pos_ppi_conf_list + neg_ppi_conf_list
+    y_dists = pos_ppi_euclidean_dist_list + neg_ppi_euclidean_dist_list
+    y_pearson = pos_ppi_pearson_list + neg_ppi_pearson_list
 
 
-# Invert y_labels series s.t. '1' is positive and '0' is negative
-y_labels_not = [1.0 - y for y in y_labels]
+    # Invert y_labels series s.t. '1' is positive and '0' is negative
+    y_labels_not = [1.0 - y for y in y_labels]
 
-# Sort inverted y_labels series according to ascending Euclidean distance
-y_sort_euclidean = [y for _, y in sorted(zip(y_dists, y_labels_not), key = lambda pair: pair[0], reverse=False)]
+    # Sort inverted y_labels series according to ascending Euclidean distance
+    y_sort_euclidean = [y for _, y in sorted(zip(y_dists, y_labels_not), key = lambda pair: pair[0], reverse=False)]
 
-# Sort inverted y_labels series according to descending Pearson correlation
-y_sort_pearson = [y for _, y in sorted(zip(y_pearson, y_labels_not), key = lambda pair: pair[0], reverse=True)]
+    # Sort inverted y_labels series according to descending Pearson correlation
+    y_sort_pearson = [y for _, y in sorted(zip(y_pearson, y_labels_not), key = lambda pair: pair[0], reverse=True)]
 
-true_pos = sum(y_labels_not)
+    true_pos = sum(y_labels_not)
 
-# Calculate precision and recall for Euclidean
-precision_euclidean = []
-recall_euclidean = []
-true_pos_euclidean = 0
+    # Calculate precision and recall for Euclidean
+    precision_euclidean = []
+    recall_euclidean = []
+    true_pos_euclidean = 0
 
-for i, y in enumerate(y_sort_euclidean, start=1):
-    true_pos_euclidean += y
-    curr_precision = true_pos_euclidean / i
-    curr_recall = true_pos_euclidean / true_pos
-    precision_euclidean.append(curr_precision)
-    recall_euclidean.append(curr_recall)
-    if i % 100 == 0:
-        print(f"Calculating precision-recall for model ... {i * 100 / len(y_sort_euclidean):.4f} %", end='\r')
-print("Calculating precision-recall for model ... done")
+    for i, y in enumerate(y_sort_euclidean, start=1):
+        true_pos_euclidean += y
+        curr_precision = true_pos_euclidean / i
+        curr_recall = true_pos_euclidean / true_pos
+        precision_euclidean.append(curr_precision)
+        recall_euclidean.append(curr_recall)
+        if i % 100 == 0:
+            print(f"Calculating precision-recall for model ... {i * 100 / len(y_sort_euclidean):.4f} %", end='\r')
+    print("Calculating precision-recall for model ... done      ")
 
 
-# Calculate precision and recall for Pearson
-precision_pearson = []
-recall_pearson = []
-true_pos_pearson = 0
+    # Calculate precision and recall for Pearson
+    precision_pearson = []
+    recall_pearson = []
+    true_pos_pearson = 0
 
-for i, y in enumerate(y_sort_pearson, start=1):
-    true_pos_pearson += y
-    curr_precision = true_pos_pearson / i
-    curr_recall = true_pos_pearson / true_pos
-    precision_pearson.append(curr_precision)
-    recall_pearson.append(curr_recall)
-    if i % 100 == 0:
-        print(f"Calculating precision-recall for Pearson ... {i * 100 / len(y_sort_pearson):.4f} %", end='\r')
-print("Calculating precision-recall for Pearson ... done")
+    for i, y in enumerate(y_sort_pearson, start=1):
+        true_pos_pearson += y
+        curr_precision = true_pos_pearson / i
+        curr_recall = true_pos_pearson / true_pos
+        precision_pearson.append(curr_precision)
+        recall_pearson.append(curr_recall)
+        if i % 100 == 0:
+            print(f"Calculating precision-recall for Pearson ... {i * 100 / len(y_sort_pearson):.4f} %", end='\r')
+    print("Calculating precision-recall for Pearson ... done        ")
 
-# Plot Precision-Recall curves of Euclidean distance and Pearson as PPI predictors
-plt.plot(recall_euclidean, precision_euclidean, color='blue')
-plt.plot(recall_pearson, precision_pearson, color='orange')
-plt.title("PR Curve")
-plt.xlabel("Recall")
-plt.ylabel("Precision")
-plt.savefig("pr_curve.png")
-plt.legend(["Euclidean PR", "Pearson PR"])
-plt.clf()
-plt.cla()
+    # Plot Precision-Recall curves of Euclidean distance and Pearson as PPI predictors
+    plt.plot(recall_euclidean, precision_euclidean, color='blue')
+    plt.plot(recall_pearson, precision_pearson, color='orange')
+    plt.title("PR Curve")
+    plt.xlabel("Recall")
+    plt.ylabel("Precision")
+    plt.savefig(f"pr_curve_{k+1}.png")
+    plt.legend(["Euclidean PR", "Pearson PR"])
+    plt.clf()
+    plt.cla()
 
-# Obtain area under PR curves
-aupr_euclidean = get_aupr(precision_euclidean, recall_euclidean)
-aupr_pearson = get_aupr(precision_pearson, recall_pearson)
-
-# Print metrics to txt file
-with open("output.log", 'w') as outFile:
-    outFile.write(f"Minimum Average Validation Loss: {min_avg_valid_loss:.4f}\n")
-    outFile.write(f"Minimum Average Test Loss: {min_avg_test_loss:.4f}\n")
-    outFile.write(f"Difference Between ED Means of Pos/Neg PPIs: {diff_means_pos_neg_pdf:.4f}\n")
-    outFile.write(f"Area Under Euclidean PR Curve: {aupr_euclidean:.4f}\n")
-    outFile.write(f"Area Under Pearson PR Curve: {aupr_pearson:.4f}\n")
-outFile.close()
+    # Obtain area under PR curves
+    aupr_euclidean = get_aupr(precision_euclidean, recall_euclidean)
+    aupr_pearson = get_aupr(precision_pearson, recall_pearson)
+    # Print metrics to txt file
+    with open(f"results-final_{k+1}.log", 'w') as outFile:
+        outFile.write(f"Minimum Average Validation Loss: {min_avg_valid_loss:.4f}\n")
+        outFile.write(f"Minimum Average Test Loss: {min_avg_test_loss:.4f}\n")
+        outFile.write(f"Difference Between ED Means of Pos/Neg PPIs: {diff_means_pos_neg_pdf:.4f}\n")
+        outFile.write(f"Area Under Euclidean PR Curve: {aupr_euclidean:.4f}\n")
+        outFile.write(f"Area Under Pearson PR Curve: {aupr_pearson:.4f}\n")
+        outFile.close()
