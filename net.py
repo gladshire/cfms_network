@@ -1,14 +1,10 @@
-# Try noise reduction
-
-
 # TODO: Create random sampling PR curve function for plotting precision-recall every epoch
-# TODO: Try thresholding positive PPIs for Pearson > 0.1
+# TODO: Try to obtain 2284 Train set pos PPIs size from HEK293_EDTA_minus.elut file
+#  - Which is the network missing?
 
 # Co-fractionation Mass Spectrometry Siamese Network
 # Written by Dr. Kevin Drew and Miles Woodcock-Girard
 # For Drew Lab at University of Illinois at Chicago
-
-# Goal: Develop some learned transformation that, when applied to the 1-D elution trace
 #       vectors for proteins A and B, returns vectors with a lower Euclidean Distance if
 #       A and B co-complex, and a higher Euclidean Distance if A and B do not co-complex.
 #       More specifically, to achieve better performance than Pearson correlation.
@@ -64,22 +60,21 @@ import scipy.stats
 from scipy.stats import norm
 
 import pandas as pd
-import qnorm
 import seaborn as sns
 
 import curses
 import sys
 import os
 
-# Use random subset samples of test/validation sets for speed during debugging
-__FAST_VALID_TEST__ = False
-PARAMETER_FILENAME = "jul29.pt"
+# Use random subset samples for speeding up run on test sets during debugging
+__FAST_TEST__ = True
+PARAMETER_FILENAME = "cfms_ppi_network_bdlstm_adam_1e-4_256.pt"
 
 # Program parameters
 SEED = 5123
 NUM_THREAD = 4
-SUBSET_SIZE = 1000 # For if __FAST_VALID_TEST__ is True
-SAMPLE_RATE = 10   # How many batches between loss samples (for plotting loss curve)
+SUBSET_SIZE = 10000 # For if __FAST_VALID_TEST__ is True
+SAMPLE_RATE = 5     # How many batches between loss samples (for printing to terminal, plotting loss curve)
 
 # Database directories
 DATADIR_ELUT = "data/elut/"
@@ -87,15 +82,15 @@ DATADIR_PPIS = "data/ppi/"
 
 # Training parameters
 NUM_EPOCHS = 25
-BATCH_SIZE = 128
-LEARN_RATE = 1e-3
-MOMENTUM = 0
+BATCH_SIZE = 256
+LEARN_RATE = 1e-4
+MOMENTUM = 0.9
 EARLY_THRESHOLD = 0.01 # Loss value below which early stopping will occur
 
 # Loss function parameters
 TEMPERATURE = 1.0 # For cosine distance contrastive loss
 SENSITIVITY = 3   # For changing behavior confidence function. Higher values push conf. towards lower ED
-MARGIN = 2.0      # Minimum Euclidean separation for negative PPIs
+MARGIN = 1.0      # Minimum Euclidean separation for negative PPIs
 MAX_ED = 3.75     # Euclidean distance threshold for 0% confidence 
 
 # Set up manual seeding for random number generators
@@ -179,7 +174,6 @@ elut_data = [DATADIR_ELUT + "HEK293_EDTA_minus_SEC_control_20220626.elut",
              DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutaoufik_2019_2_R1.elut",
              DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutaoufik_2019_2_R2.elut"]
 
-
 # Assemble list of preprocessed, normalized .elut dataframes
 elut_list = []
 for elut_file in elut_data:
@@ -188,14 +182,9 @@ for elut_file in elut_data:
 
     #elut_df = elut_df.set_index('Unnamed: 0')
     elut_t10_df = elut_df[elut_df.sum(axis=1) >= 10]
-    # Row-max normalization (all values in elution trace divided by maximum value in that trace)
-    #elut_t10_rwn_df = elut_t10_df.div(elut_t10_df.max(axis=1), axis=0)
 
     # Row-sum normalization (all values in elution trace divided by total PSMs in that trace)
     elut_t10_rsm_df = elut_t10_df.div(elut_t10_df.sum(axis=1), axis=0)
-
-    # Quantile normalization (quantiles of all traces in .elut file are aligned)
-    #elut_t10_qtn_df = qnorm.quantile_normalize(elut_t10_df, axis=0)
 
     # Add normalized dataframe to list containing elution data
     elut_list.append(elut_t10_rsm_df)
@@ -228,10 +217,11 @@ for i in training_neg_ppis:
 random.shuffle(trainingelut_pos_ppis)
 random.shuffle(trainingelut_neg_ppis)
 
-train_pos_ppis = trainingelut_pos_ppis[:(int)(len(trainingelut_pos_ppis)/2)]
-valid_pos_ppis = trainingelut_pos_ppis[(int)(len(trainingelut_pos_ppis)/2):]
-train_neg_ppis = trainingelut_neg_ppis[:(int)(len(trainingelut_neg_ppis)/2)]
-valid_neg_ppis = trainingelut_neg_ppis[(int)(len(trainingelut_pos_ppis)/2):]
+train_pos_ppis = trainingelut_pos_ppis[:(int)(len(trainingelut_pos_ppis)-(len(trainingelut_pos_ppis)/2))]
+valid_pos_ppis = trainingelut_pos_ppis[(int)(len(trainingelut_pos_ppis)-(len(trainingelut_pos_ppis)/2)):]
+
+train_neg_ppis = trainingelut_neg_ppis[:(int)(len(trainingelut_neg_ppis)-(len(trainingelut_neg_ppis)/2))]
+valid_neg_ppis = trainingelut_neg_ppis[(int)(len(trainingelut_neg_ppis)-(len(trainingelut_neg_ppis)/2)):]
 
 
 # Only keep protein pairs contained within elution dataframe
@@ -248,8 +238,6 @@ for i in test_neg_ppis:
 def plot_loss(iteration, loss_lists, labels, xaxis, title, filename=None):
     if len(labels) != len(loss_lists):
         print("ERROR: Mismatch in plot lengths")
-        print(len(labels))
-        print(len(loss_tuple))
         exit()
     for loss_series in loss_lists:
         plt.plot(iteration, loss_series)
@@ -289,6 +277,9 @@ class elutionPairDataset(Dataset):
         self.labels = []
         self.ppis_elut_ids = []
 
+        numPos = 0
+        numNeg = 0
+
         for elut_id, elut_df in enumerate(self.elut_df_list):
             # miles: Loading the elut dataframe as a set vastly reduces runtime of dataset initialization
             elut_df_index = set(elut_df.index)
@@ -296,20 +287,26 @@ class elutionPairDataset(Dataset):
             pos_ppis_elut = [pppi for pppi in pos_ppis if len(pppi.intersection(elut_df_index)) == 2]
             neg_ppis_elut = [nppi for nppi in neg_ppis if len(nppi.intersection(elut_df_index)) == 2]
 
+            numPos += len(pos_ppis_elut)
+            numNeg += len(neg_ppis_elut)
+
             if filterPearson:
                 # Remove low-Pearson samples from positive PPIs
                 pos_ppis_elut = [pppi for pppi in pos_ppis_elut if scipy.stats.pearsonr(
                     torch.from_numpy(elut_df.T[list(pppi)[0]].values).float(),
-                    torch.from_numpy(elut_df.T[list(pppi)[1]].values).float())[0] >= 0.25]
+                    torch.from_numpy(elut_df.T[list(pppi)[1]].values).float())[0] >= 0.4]
 
                 # Remove high-Pearson samples from negative PPIs
                 neg_ppis_elut = [nppi for nppi in neg_ppis_elut if scipy.stats.pearsonr(
                     torch.from_numpy(elut_df.T[list(nppi)[0]].values).float(),
-                    torch.from_numpy(elut_df.T[list(nppi)[1]].values).float())[0] <= 0.75]
+                    torch.from_numpy(elut_df.T[list(nppi)[1]].values).float())[0] <= 0.6]
 
             self.ppis = self.ppis + pos_ppis_elut + neg_ppis_elut
             self.labels = self.labels + [0]*len(pos_ppis_elut) + [1]*len(neg_ppis_elut)
             self.ppis_elut_ids = self.ppis_elut_ids + [elut_id]*len(pos_ppis_elut) + [elut_id]*len(neg_ppis_elut)
+
+        print(f"Number of positive PPIs: {numPos}")
+        print(f"Number of negative PPIs: {numNeg}")
 
         self.transform = transform
         self.input_size = input_size
@@ -329,6 +326,12 @@ class elutionPairDataset(Dataset):
             elut0 = (prot0, nn.functional.pad(elut0[1], (self.input_size - elut0[1].size()[0], 0)))
             elut1 = (prot1, nn.functional.pad(elut1[1], (self.input_size - elut1[1].size()[0], 0)))
 
+            if torch.isnan(elut0[1]).any():
+                print("NaN found after padding input0")
+
+            if torch.isnan(elut1[1]).any():
+                print("NaN found after padding input1")
+
         elut0 = (elut0[0], elut0[1].unsqueeze(0))
         elut1 = (elut1[0], elut1[1].unsqueeze(0))
 
@@ -337,14 +340,15 @@ class elutionPairDataset(Dataset):
     def __len__(self):
         return len(self.ppis)
 
-
+# =======================================================================================
+#                            INSTANTIATE MODEL DATASETS
+# =======================================================================================
 
 # Instantiate the training dataset for the model
 train_siamese_dataset = elutionPairDataset(elutdf_list=elut_list,
                                            pos_ppis = train_pos_ppis,
                                            neg_ppis = train_neg_ppis,
                                            transform=True)
-#                                           filterPearson=True)
 print("Training set assembled")
 print(f"  Number of samples: {len(train_siamese_dataset)}")
 
@@ -353,9 +357,6 @@ valid_siamese_dataset = elutionPairDataset(elutdf_list=elut_list,
                                            pos_ppis = valid_pos_ppis,
                                            neg_ppis = valid_neg_ppis,
                                            transform=True)
-
-subset_indices = torch.randperm(len(valid_siamese_dataset))[:SUBSET_SIZE]
-subset_valid_siamese_dataset = Subset(valid_siamese_dataset, subset_indices)
 print("Validation set assembled")
 print(f"  Number of samples: {len(valid_siamese_dataset)}")
 
@@ -371,53 +372,52 @@ print("Test set assembled")
 print(f"  Number of samples: {len(test_siamese_dataset)}")
 
 
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=512):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * -(math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.pe = pe.unsqueeze(0)
 
-# Instantiate a dataloader for visualization
-vis_dataloader = DataLoader(train_siamese_dataset,
-                            shuffle=True,
-                            drop_last=True,
-                            num_workers=NUM_THREAD,
-                            batch_size=8)
+    def forward(self, x):
+        x = x + self.pe[:, :x.size(1)].to(x.device)
+        return x
 
 
 # Define the siamese neural network
 class siameseNet(nn.Module):
-    def __init__(self, hidden_size=128):
+    def __init__(self, projection_size=32, hidden_size=64, rnn_layers=1, lstm_layers=3):
         super(siameseNet, self).__init__()
 
-        # Elution tensor input: (batch_size, channels, num_fractions)
+        # Input: (B, 1, 128)
+        self.pos_encoder = PositionalEncoding(d_model=hidden_size)
 
-        # CONVOLUTION OUTPUT DIMENSIONS:
-        #   Size: (num_fractions - kernel_size + 2*padding / stride) + 1)
-
-        self.cnn1 = nn.Sequential(
-                nn.Conv1d(in_channels=1, out_channels=4,
-                          kernel_size=3, stride=1, padding=1),
-                nn.BatchNorm1d(4),
-                nn.ELU(inplace=True),
-
-                nn.Conv1d(in_channels=4, out_channels=16,
-                          kernel_size=3, stride=1, padding=1),
-                nn.BatchNorm1d(16),
-                nn.ELU(inplace=True),
-
-        )
-
-        self.rnn = nn.LSTM(input_size=1, hidden_size=64, num_layers=1,
-                           bidirectional=True, batch_first=True)
-
+        # Transformer layers
+        #   - Overfits easily, probably too complex
         self.tns = nn.TransformerEncoder(
-                nn.TransformerEncoderLayer(d_model=1,
-                                           nhead=1, dim_feedforward=64,
+                nn.TransformerEncoderLayer(d_model=hidden_size,
+                                           nhead=1, dim_feedforward=32,
                                            batch_first=True),
-                num_layers=3
+                num_layers=1
         )
 
-        self.cnn2 = nn.Sequential(
-                nn.ConvTranspose1d(in_channels=16, out_channels=1,
-                                   kernel_size=1, stride=1, padding=1),
+        self.rnn = nn.RNN(input_size=1,
+                          hidden_size=hidden_size,
+                          num_layers=rnn_layers,
+                          batch_first=True)
 
-        )
+        self.LSTM = nn.LSTM(input_size=1,
+                            hidden_size=hidden_size,
+                            num_layers=lstm_layers,
+                            bidirectional=True,
+                            batch_first=True)
+        
+        self.input_projection = nn.Linear(1, projection_size)
+
+        self.pooling = nn.AdaptiveAvgPool1d(1)
 
         self.fc1 = nn.Sequential(
 
@@ -432,42 +432,26 @@ class siameseNet(nn.Module):
 
     # Function called on both images, x, to determine their similarity
     def forward_once(self, x):
-        # Apply convolutional encoding
-        #print(x.shape)
-        y = self.cnn1(x)
+        # x shape: [batch, 1, 128] -> [batch, 128, 1]
+        x = x.permute(0, 2, 1)
 
-        # Prepare for recurrent layers
-        #print(y.shape)
-        #y = y.permute(0, 2, 1)
+        # Apply input projection
+        #x = self.input_projection(x)
 
-        # Apply bidirectional recurrency
-        #y, _ = self.rnn(y)
+        # Apply positional encoding
+        #x = self.pos_encoder(x)
 
-        # Apply transformer layer
-        #print(y.shape)
-        #y = self.tns(y)
+        # Apply transformer/rnn layer
+        #x = self.tns(x)
+        #x, _ = self.rnn(x)
+        x, _ = self.LSTM(x)
 
-        # Prepare for convolutional decoding
-        #print(y.shape)
-        #y = y.permute(0, 2, 1)
+        # Reshape
+        x = x.permute(0, 2, 1) # [batch, features, seq_len]
+        x = self.pooling(x).squeeze(-1) # [batch, features]
 
-        # Apply convolutional decoding
-        #print(y.shape)
-        y = self.cnn2(y)
-        #print(y.shape)
-
-        # Flatten output to work with fully connected layer
-        y = y.reshape(y.size()[0], -1)
-
-        # Prepare Pearson input for network
-        #pcc = pcc.view(-1, 1).expand(y.size(0), 1)
-        #y = torch.cat((y, pcc), dim=1)
-
-        # Apply fully connected layer
-        # Potentiall add Pearson correlation coefficient here
-        #y = self.fc1(y)
-
-        return y
+        #x, _ = x.max(dim=1)
+        return x
 
     # Main forward function
     def forward(self, input1, input2):
@@ -508,6 +492,8 @@ class contrastiveLossCosineDistance(nn.Module):
 
 
 print("Network defined. Wrapping elution datasets in DataLoaders ...")
+
+
 # Load training dataset
 train_dataloader = DataLoader(train_siamese_dataset,
                               shuffle=True,
@@ -516,23 +502,19 @@ train_dataloader = DataLoader(train_siamese_dataset,
                               batch_size=BATCH_SIZE)
 
 # Load validation and test datasets
-if __FAST_VALID_TEST__:
-    valid_dataloader = DataLoader(subset_valid_siamese_dataset,
-                                  shuffle=True,
-                                  drop_last=True,
-                                  num_workers=2,
-                                  batch_size=BATCH_SIZE)
+valid_dataloader = DataLoader(valid_siamese_dataset,
+                              shuffle=True,
+                              drop_last=True,
+                              num_workers=2,
+                              batch_size=BATCH_SIZE)
+
+if __FAST_TEST__:
     test_dataloader = DataLoader(subset_test_siamese_dataset,
                                  shuffle=True,
                                  drop_last=True,
                                  num_workers=2,
                                  batch_size=BATCH_SIZE)
 else:
-    valid_dataloader = DataLoader(valid_siamese_dataset,
-                                  shuffle=True,
-                                  drop_last=True,
-                                  num_workers=2,
-                                  batch_size=BATCH_SIZE)
     test_dataloader = DataLoader(test_siamese_dataset,
                                  shuffle=True,
                                  drop_last=True,
@@ -558,8 +540,8 @@ criterion = contrastiveLossEuclidean(margin=MARGIN)
 
 
 # Choose optimizer algorithm
-#optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
-optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
+optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
+#optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
 
 # Choose learning rate scheduler
 # miles: ReduceLROnPlateau works great dynamically, StepLR good for exploring ruggedness
@@ -571,7 +553,8 @@ scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, f
 #optimizer.zero_grad()
 
 counter = []
-loss_hist = []
+train_loss_hist = []
+valid_loss_hist = []
 epoch_hist = []
 avg_test_loss_hist = []
 avg_valid_loss_hist = []
@@ -593,8 +576,6 @@ def weights_init(m):
 
 # Training loop
 if trainNet:
-    #print("Instantiating model training with following architecture:")
-    #print(net)
 
     print("\nWith following hyperparameters")
     print(f"Number of epochs: {NUM_EPOCHS}")
@@ -609,101 +590,95 @@ if trainNet:
         # Iterate over batches
         net.train()
         train_loss = 0
+        valid_loss = 0
         num_batches = len(train_dataloader)
-        for i, (elut0, elut1, label, elut_id) in enumerate(train_dataloader, 0):
-            pccList = []
+
+        nb_train = len(train_dataloader)
+        nb_valid = len(valid_dataloader)
+
+        #print(f"Train: {nb_train}")
+        #print(f"Valid: {nb_valid}")
+
+        valid_dataloader_iter = iter(valid_dataloader)
+
+        for i, (elut0_train, elut1_train, label_train, elut_id_train) in enumerate(train_dataloader, 0):
+
+            try:
+                (elut0_valid, elut1_valid, label_valid, elut_id_valid) = next(valid_dataloader_iter)
+            except StopIteration:
+                valid_dataloader_iter = iter(valid_dataloader)
+                (elut0_valid, elut1_valid, label_valid, elut_id_valid) = next(valid_dataloader_iter)
+
+            pccs_train = []
+            pccs_valid = []
 
             # Obtain protein IDs
-            prot0, prot1 = elut0[0], elut1[0]
+            prot0_train, prot1_train = elut0_train[0], elut1_train[0]
+            prot0_valid, prot1_valid = elut0_valid[0], elut1_valid[1]
 
             # Obtain Pearson correlation between elut0, elut1
-            for ppi0, ppi1 in zip(elut0[1], elut1[1]):
-                pccList.append(scipy.stats.pearsonr(ppi0[0], ppi1[0])[0])
+            for ppi0_train, ppi1_train in zip(elut0_train[1], elut1_train[1]):
+                pccs_train.append(scipy.stats.pearsonr(ppi0_train[0], ppi1_train[0])[0])
 
-            pcc = torch.tensor(pccList, dtype=torch.float32).cuda()
+            for ppi0_valid, ppi1_valid in zip(elut0_valid[1], elut1_valid[1]):
+                pccs_valid.append(scipy.stats.pearsonr(ppi0_valid[0], ppi1_valid[0])[0])
 
             # Send elution data, labels to CUDA
-            elut0, elut1, label = elut0[1].cuda(), elut1[1].cuda(), label.cuda()
+            elut0_train, elut1_train, label_train = elut0_train[1].cuda(), elut1_train[1].cuda(), label_train.cuda()
+            elut0_valid, elut1_valid, label_valid = elut0_valid[1].cuda(), elut1_valid[1].cuda(), label_valid.cuda()
 
             # Zero the gradients
             optimizer.zero_grad()
 
             # Pass two elution traces into network and obtain two outputs
-            output1, output2 = net(elut0, elut1)
-
+            output1_train, output2_train = net(elut0_train, elut1_train)
+            net.eval()
+            with torch.no_grad():
+                output1_valid, output2_valid = net(elut0_valid, elut1_valid)
+            net.train()
+    
             # Pass outputs, label to the contrastive loss function
-            train_loss_contrastive = criterion(output1, output2, label)
+            train_loss_contrastive = criterion(output1_train, output2_train, label_train)
+            valid_loss_contrastive = criterion(output1_valid, output2_valid, label_valid)
 
             # Perform backpropagation
             train_loss_contrastive.backward()
+
+            # Perform gradient clipping
+            nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
 
             # Optimize
             optimizer.step()
 
             # Update training loss series for plotting
             if i % SAMPLE_RATE == 0:
-                print(f"  Batch [{i} / {num_batches}] Training Loss: {train_loss_contrastive.item()}")
+                print(f"  Batch [{i} / {num_batches}]")
+                print(f"      Training Loss: {train_loss_contrastive.item():.4f}")
+                #print(f"      Training Loss:\n")
+                #print(f"        Scaled: {train_loss_contrastive.item()/len(elut0_train):.4f}")
+                #print(f"          True: {train_loss_contrastive.item():.4f}")
+                print(f"    Validation Loss: {valid_loss_contrastive.item():.4f}")
+                #print(f"    Validation Loss:\n")
+                #print(f"        Scaled: {valid_loss_contrastive.item()/len(elut0_valid):.4f}")
+                #print(f"          True: {valid_loss_contrastive.item():.4f}")
                 iteration_num += SAMPLE_RATE
 
                 counter.append(iteration_num)
-                loss_hist.append(train_loss_contrastive.item())
+                train_loss_hist.append(train_loss_contrastive.item())
+                valid_loss_hist.append(valid_loss_contrastive.item())
   
         # Produce training loss curve figure PNG
-        plot_loss(counter, [loss_hist], ["Training loss"], title="Contrastive Loss - Train",
-                  xaxis="Batches", filename=f"train_{epoch+1}.png")
+        plot_loss(counter, [train_loss_hist, valid_loss_hist], ["Training loss", "Validation Loss"], title="Contrastive Loss",
+                  xaxis="Batches", filename=f"{PARAMETER_FILENAME.split(".")[0]}_train_{epoch+1}.png")
 
-        # Test model on validation set 
+        # Test model on test set
         net.eval()
-        valid_loss = 0.0
-        num_batches_valid = len(valid_dataloader)
-        for valid_i, (valid_elut0, valid_elut1, valid_label, valid_elut_id) in enumerate(valid_dataloader, 0):
-            pccListValid = []
-
-            # Obtain protein IDs
-            prot0, prot1 = valid_elut0[0], valid_elut1[0]
-            for valid_ppi0, valid_ppi1 in zip(valid_elut0[1], valid_elut1[1]):
-                pccListValid.append(scipy.stats.pearsonr(valid_ppi0[0], valid_ppi1[0])[0])
-
-            pcc = torch.tensor(pccListValid, dtype=torch.float32).cuda()
-
-            # Send elution data, labels to CUDA
-            valid_elut0, valid_elut1, valid_label = valid_elut0[1].cuda(), valid_elut1[1].cuda(), valid_label.cuda()
-
-            # Pass two elution traces into network and obtain two outputs
-            valid_output1, valid_output2 = net(valid_elut0, valid_elut1)
-
-            # Pass outputs, label to the contrastive loss function
-            valid_loss_contrastive = criterion(valid_output1, valid_output2, valid_label)
-
-            # Add to total validation loss
-            valid_loss += valid_loss_contrastive.item()
-
-            # Update validation loss series for plotting
-            if valid_i % 5 == 0 and valid_i > 0:
-                avg_valid_loss = valid_loss / valid_i
-                print(f"Now running model on validation set ... {valid_i * 100 / len(valid_dataloader):.4f} %  |  Avg. Loss: {avg_valid_loss}", end='\r')
-
-        # Obtain the average validation set loss per batch
-        avg_valid_loss = valid_loss / len(valid_dataloader)
-        if avg_valid_loss < min_avg_valid_loss:
-            min_avg_valid_loss = avg_valid_loss
-
-        # Get learning rate before and after stepping the scheduler
-        before_lr = optimizer.param_groups[0]["lr"]
-        scheduler.step(avg_valid_loss)
-        after_lr = optimizer.param_groups[0]["lr"]
-
-        # Alert user if learning rate has changed
-        if before_lr != after_lr:
-            print(f"  Decreasing learning rate from {before_lr} to {after_lr}")
-
-
         with torch.no_grad():
             test_loss = 0.0
             for test_i, (test_elut0, test_elut1, test_label, test_elut_id) in enumerate(test_dataloader, 0):
                 pccListTest = []
                 # Obtain protein IDs
-                prot0, prot1 = elut0[0], elut1[0]
+                test_prot0, test_prot1 = test_elut0[0], test_elut1[0]
                 for test_ppi0, test_ppi1 in zip(test_elut0[1], test_elut1[1]):
                     pccListTest.append(scipy.stats.pearsonr(test_ppi0[0], test_ppi1[0])[0])
 
@@ -713,13 +688,13 @@ if trainNet:
                 test_elut0, test_elut1, test_label = test_elut0[1].cuda(), test_elut1[1].cuda(), test_label.cuda()
 
                 # Padd two elution traces into network and obtain two outputs
-                output1, output2 = net(test_elut0, test_elut1)
+                test_output1, test_output2 = net(test_elut0, test_elut1)
 
                 # Pass outputs, label to the contrastive loss function
-                loss_test_contrastive = criterion(output1, output2, test_label)
+                loss_test_contrastive = criterion(test_output1, test_output2, test_label)
 
                 # Add to total test loss
-                test_loss += loss_test_contrastive
+                test_loss += loss_test_contrastive.item()
 
                 if test_i % 5 == 0 and test_i > 0:
                     avg_test_loss = test_loss / test_i
@@ -735,19 +710,17 @@ if trainNet:
         # Append to avg loss vs epochs series
         epoch_hist.append(epoch+1)
         avg_test_loss_hist.append(avg_test_loss)
-        avg_valid_loss_hist.append(avg_valid_loss)
 
         # Summarize end of epoch metrics
         print(f"\nEnd of epoch summary")
-        print(f"  Average validation loss: {avg_valid_loss}")
         print(f"  Average testing loss: {avg_test_loss}")
 
         # Plot average test set loss vs epoch number 
         if epoch != 0:
-            plot_loss(epoch_hist, [avg_test_loss_hist, avg_valid_loss_hist],
-                      ["Testing loss", "Validation loss"],
+            plot_loss(epoch_hist, [avg_test_loss_hist],
+                      ["Testing loss"],
                       title="Average Contrastive Loss", xaxis="Epochs",
-                      filename=f"epoch_{epoch+1}.png")
+                      filename=f"{PARAMETER_FILENAME.split(".")[0]}_epoch_{epoch+1}.png")
 
         # Early stopping according to user-defined threshold
         if avg_test_loss < EARLY_THRESHOLD:
@@ -764,20 +737,14 @@ test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
 subset_indices = torch.randperm(len(test_pos_elution_pair_dataset))[:SUBSET_SIZE]
 subset_test_pos_elution_pair_dataset = Subset(test_pos_elution_pair_dataset, subset_indices)
 
-if __FAST_VALID_TEST__:
-    test_pos_dataloader = DataLoader(subset_test_pos_elution_pair_dataset,
-                                     num_workers=1,
-                                     batch_size=1,
-                                     shuffle=True)
-else:
-    test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset,
-                                     num_workers=1,
-                                     batch_size=1,
-                                     shuffle=True)
+test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset,
+                                 num_workers=1,
+                                 batch_size=1,
+                                 shuffle=True)
 
 pos_ppi_euclidean_dist_list = []
 pos_ppi_pearson_list = []
-pos_ppi_conf_output_file = open("pos_ppi_conf.txt", 'w')
+pos_ppi_conf_output_file = open(f"{PARAMETER_FILENAME.split(".")[0]}_pos_ppi_conf.txt", 'w')
 pos_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
 pos_ppi_conf_list = []
 pos_ppi_lab_list = []
@@ -790,7 +757,10 @@ for i, (pos_elut0, pos_elut1, pos_label, elut_id) in enumerate(test_pos_dataload
     pos_elut0, pos_elut1 = pos_elut0[1], pos_elut1[1]
 
     # Obtain Pearson correlation
+    #if np.all(np.isfinite(pos_elut0[0][0])) and np.all(np.isfinite(pos_elut1[0][0])):
     pos_ppi_pearson_list.append(scipy.stats.pearsonr(pos_elut0[0][0], pos_elut1[0][0])[0])
+    #else:
+    #    continue
 
     # Run model on data
     output1, output2 = net(pos_elut0.cuda(), pos_elut1.cuda())
@@ -822,21 +792,15 @@ test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
 subset_indices = torch.randperm(len(test_neg_elution_pair_dataset))[:SUBSET_SIZE]
 subset_test_neg_elution_pair_dataset = Subset(test_neg_elution_pair_dataset, subset_indices)
 
-if __FAST_VALID_TEST__:
-    test_neg_dataloader = DataLoader(subset_test_neg_elution_pair_dataset,
-                                     num_workers=1,
-                                     batch_size=1,
-                                     shuffle=True)
-else:
-    test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset,
-                                     num_workers=1,
-                                     batch_size=1,
-                                     shuffle=True)
+test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset,
+                                 num_workers=1,
+                                 batch_size=1,
+                                 shuffle=True)
 
 # Iterate over negative samples, getting Pearson scores and post-transform Euclidean distance for each PPI
 neg_ppi_euclidean_dist_list = []
 neg_ppi_pearson_list = []
-neg_ppi_conf_output_file = open("neg_ppi_conf.txt", 'w')
+neg_ppi_conf_output_file = open(f"{PARAMETER_FILENAME.split(".")[0]}_neg_ppi_conf.txt", 'w')
 neg_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
 neg_ppi_conf_list = []
 neg_ppi_lab_list = []
@@ -884,7 +848,7 @@ pylab.annotate(f"{mean_pos}", (0.0, mean_pos))
 pylab.title("PDFs of Euclidean distances after model transform")
 pylab.legend()
 pylab.grid()
-pylab.savefig("pos_neg_pairs_EUCLIDEAN.png")
+pylab.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_EUCLIDEAN.png")
 pylab.clf()
 pylab.cla()
 
@@ -896,7 +860,7 @@ sns.histplot(pos_ppi_euclidean_dist_list, alpha=0.5, bins=25,
 plt.title("Euclidean distance counts")
 plt.legend()
 plt.grid()
-plt.savefig("fig_hist_EUCLIDEAN.png")
+plt.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_fig_hist_EUCLIDEAN.png")
 pylab.clf()
 pylab.cla()
 
@@ -910,7 +874,7 @@ plt.plot(x,y2,label="pearson_positive_pairs")
 plt.title("PDFs of Pearson scores")
 plt.legend()
 plt.grid()
-plt.savefig(f"pos_neg_pairs_PEARSON.png")
+plt.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_PEARSON.png")
 plt.clf()
 plt.cla()
 
@@ -922,7 +886,7 @@ sns.histplot(pos_ppi_pearson_list, alpha=0.5, bins=50,
 plt.title("Pearson score counts")
 plt.legend()
 plt.grid()
-plt.savefig(f"fig_hist_PEARSON.png")
+plt.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_fig_hist_PEARSON.png")
 pylab.clf()
 pylab.cla()
 
@@ -942,7 +906,7 @@ df_pearson_euclidean = df_pearson_euclidean.melt(id_vars=['Label', 'Euclidean Di
 scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list, s=10)
 scat1.set_xlim(-1, 12)
 fig_scat1 = scat1.get_figure()
-fig_scat1.savefig("pearson_vs_euc_scatter.png")
+fig_scat1.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_scatter.png")
 fig_scat1.clf()
 
 # Plot a contour graph of the positive PPIs
@@ -951,7 +915,7 @@ kde1 = sns.kdeplot(data=df_pearson_euclidean, x='Euclidean Distance', y='Pearson
                    common_norm=False, hue='Label', levels=15)
 kde1.set_xlim(-1, 12)
 fig_kde1 = kde1.get_figure()
-fig_kde1.savefig("pearson_vs_euc_kde.png")
+fig_kde1.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_kde.png")
 fig_kde1.clf()
 
 # Get labels, confidences, Euclidean distances, Pearson coefficients of test points
@@ -1002,22 +966,22 @@ for i, y in enumerate(y_sort_pearson, start=1):
         print(f"Calculating precision-recall for Pearson ... {i * 100 / len(y_sort_pearson):.4f} %", end='\r')
     print("Calculating precision-recall for Pearson ... done        ")
 
-    # Plot Precision-Recall curves of Euclidean distance and Pearson as PPI predictors
-    #plt.plot(recall_euclidean, precision_euclidean, color='blue')
-    plt.plot(recall_pearson, precision_pearson, color='orange')
-    plt.title("PR Curve")
-    plt.xlabel("Recall")
-    plt.ylabel("Precision")
-    plt.savefig("pr_curve_{k+1}.png")
-    plt.legend(["Euclidean PR", "Pearson PR"])
-    plt.clf()
-    plt.cla()
+# Plot Precision-Recall curves of Euclidean distance and Pearson as PPI predictors
+#plt.plot(recall_euclidean, precision_euclidean, color='blue')
+plt.plot(recall_pearson, precision_pearson, color='orange')
+plt.title("PR Curve")
+plt.xlabel("Recall")
+plt.ylabel("Precision")
+plt.legend(["Euclidean PR", "Pearson PR"])
+plt.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pr_curve.png")
+plt.clf()
+plt.cla()
 
-    # Obtain area under PR curves
-    aupr_euclidean = get_aupr(precision_euclidean, recall_euclidean)
-    aupr_pearson = get_aupr(precision_pearson, recall_pearson)
+# Obtain area under PR curves
+aupr_euclidean = get_aupr(precision_euclidean, recall_euclidean)
+aupr_pearson = get_aupr(precision_pearson, recall_pearson)
 # Print metrics to txt file
-with open("results-final_{k+1}.log", 'w') as outFile:
+with open(f"{PARAMETER_FILENAME.split(".")[0]}_results-final.log", 'w') as outFile:
     outFile.write(f"Minimum Average Validation Loss: {min_avg_valid_loss:.4f}\n")
     outFile.write(f"Minimum Average Test Loss: {min_avg_test_loss:.4f}\n")
     outFile.write(f"Difference Between ED Means of Pos/Neg PPIs: {diff_means_pos_neg_pdf:.4f}\n")
@@ -1036,18 +1000,13 @@ for k, elut in enumerate(elut_list):
     subset_indices = torch.randperm(len(test_pos_elution_pair_dataset))[:SUBSET_SIZE]
     subset_test_pos_elution_pair_dataset = Subset(test_pos_elution_pair_dataset, subset_indices)
 
-    if __FAST_VALID_TEST__:
-        test_pos_dataloader = DataLoader(subset_test_pos_elution_pair_dataset,
-                                         num_workers=1,
-                                         batch_size=1)
-    else:
-        test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset,
-                                         num_workers=1,
-                                         batch_size=1)
+    test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset,
+                                     num_workers=1,
+                                     batch_size=1)
 
     pos_ppi_euclidean_dist_list = []
     pos_ppi_pearson_list = []
-    pos_ppi_conf_output_file = open(f"pos_ppi_conf_{k+1}.txt", 'w')
+    pos_ppi_conf_output_file = open(f"{PARAMETER_FILENAME.split(".")[0]}_pos_ppi_conf_{k+1}.txt", 'w')
     pos_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
     pos_ppi_conf_list = []
     pos_ppi_lab_list = []
@@ -1095,19 +1054,14 @@ for k, elut in enumerate(elut_list):
     subset_indices = torch.randperm(len(test_neg_elution_pair_dataset))[:SUBSET_SIZE]
     subset_test_neg_elution_pair_dataset = Subset(test_neg_elution_pair_dataset, subset_indices)
 
-    if __FAST_VALID_TEST__:
-        test_neg_dataloader = DataLoader(subset_test_neg_elution_pair_dataset,
-                                         num_workers=1,
-                                         batch_size=1)
-    else:
-        test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset,
-                                         num_workers=1,
-                                         batch_size=1)
+    test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset,
+                                     num_workers=1,
+                                     batch_size=1)
 
     # Iterate over negative samples, getting Pearson scores and post-transform Euclidean distance for each PPI
     neg_ppi_euclidean_dist_list = []
     neg_ppi_pearson_list = []
-    neg_ppi_conf_output_file = open(f"neg_ppi_conf_{k+1}.txt", 'w')
+    neg_ppi_conf_output_file = open(f"{PARAMETER_FILENAME.split(".")[0]}_neg_ppi_conf_{k+1}.txt", 'w')
     neg_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
     neg_ppi_conf_list = []
     neg_ppi_lab_list = []
@@ -1155,7 +1109,7 @@ for k, elut in enumerate(elut_list):
     pylab.title("PDFs of Euclidean distances after model transform")
     pylab.legend()
     pylab.grid()
-    pylab.savefig(f"pos_neg_pairs_EUCLIDEAN_{k+1}.png")
+    pylab.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_EUCLIDEAN_{k+1}.png")
     pylab.clf()
     pylab.cla()
 
@@ -1167,7 +1121,7 @@ for k, elut in enumerate(elut_list):
     plt.title("Euclidean distance counts")
     plt.legend()
     plt.grid()
-    plt.savefig(f"fig_hist_EUCLIDEAN_{k+1}.png")
+    plt.savefig(f"f{PARAMETER_FILENAME.split(".")[0]}_ig_hist_EUCLIDEAN_{k+1}.png")
     pylab.clf()
     pylab.cla()
 
@@ -1180,7 +1134,7 @@ for k, elut in enumerate(elut_list):
     plt.title("PDFs of Pearson scores")
     plt.legend()
     plt.grid()
-    plt.savefig(f"pos_neg_pairs_PEARSON_{k+1}.png")
+    plt.savefig(f"p{PARAMETER_FILENAME.split(".")[0]}_os_neg_pairs_PEARSON_{k+1}.png")
     plt.clf()
     plt.cla()
 
@@ -1192,7 +1146,7 @@ for k, elut in enumerate(elut_list):
     plt.title(f"Pearson score counts")
     plt.legend()
     plt.grid()
-    plt.savefig(f"fig_hist_PEARSON_{k+1}.png")
+    plt.savefig(f"f{PARAMETER_FILENAME.split(".")[0]}_ig_hist_PEARSON_{k+1}.png")
     pylab.clf()
     pylab.cla()
 
@@ -1212,7 +1166,7 @@ for k, elut in enumerate(elut_list):
     scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list, s=10)
     scat1.set_xlim(-1, 12)
     fig_scat1 = scat1.get_figure()
-    fig_scat1.savefig(f"pearson_ed_pos_scatter_{k+1}.png")
+    fig_scat1.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_pos_scatter_{k+1}.png")
     fig_scat1.clf()
 
     # Plot a contour graph of the positive PPIs
@@ -1221,7 +1175,7 @@ for k, elut in enumerate(elut_list):
                        common_norm=False, hue='Label', levels=15)
     kde1.set_xlim(-1, 12)
     fig_kde1 = kde1.get_figure()
-    fig_kde1.savefig(f"pearson_ed_contour_{k+1}.png")
+    fig_kde1.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_contour_{k+1}.png")
     fig_kde1.clf()
 
     # Get labels, confidences, Euclidean distances, Pearson coefficients of test points
@@ -1279,7 +1233,7 @@ for k, elut in enumerate(elut_list):
     plt.title("PR Curve")
     plt.xlabel("Recall")
     plt.ylabel("Precision")
-    plt.savefig(f"pr_curve_{k+1}.png")
+    plt.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pr_curve_{k+1}.png")
     plt.legend(["Euclidean PR", "Pearson PR"])
     plt.clf()
     plt.cla()
