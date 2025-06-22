@@ -67,21 +67,24 @@ import sys
 import os
 
 # Use random subset samples for speeding up run on test sets during debugging
-__FAST_TEST__ = True
+__FAST_TEST__ = False
 PARAMETER_FILENAME = "cfms_ppi_network_bdlstm_adam_1e-4_256.pt"
+FIGURES_DIRECTORY = "figs"
+if not os.path.exists({FIGURES_DIRECTORY}):
+    FIGURES_DIRECTORY.mkdir()
 
 # Program parameters
 SEED = 5123
 NUM_THREAD = 4
-SUBSET_SIZE = 10000 # For if __FAST_VALID_TEST__ is True
-SAMPLE_RATE = 5     # How many batches between loss samples (for printing to terminal, plotting loss curve)
+SUBSET_SIZE = 1000 # For if __FAST_VALID_TEST__ is True
+SAMPLE_RATE = 50   # How many batches between loss samples (for printing to terminal, plotting loss curve)
 
 # Database directories
 DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
 
 # Training parameters
-NUM_EPOCHS = 25
+NUM_EPOCHS = 50
 BATCH_SIZE = 256
 LEARN_RATE = 1e-4
 MOMENTUM = 0.9
@@ -162,8 +165,6 @@ elut_data = [DATADIR_ELUT + "HEK293_EDTA_minus_SEC_control_20220626.elut",
              DATADIR_ELUT + "Hs_HCW_7.elut",
              DATADIR_ELUT + "Hs_HCW_8.elut",
              DATADIR_ELUT + "Hs_HCW_9.elut",
-             DATADIR_ELUT + "Hs_IEX_1.elut",
-             DATADIR_ELUT + "Hs_IEX_2.elut",
              DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep1.elut",
              DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep2.elut",
              DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep3.elut",
@@ -177,7 +178,12 @@ elut_data = [DATADIR_ELUT + "HEK293_EDTA_minus_SEC_control_20220626.elut",
 # Assemble list of preprocessed, normalized .elut dataframes
 elut_list = []
 for elut_file in elut_data:
-    print(f"Parsing \'{elut_file}\' ...")
+
+    if not os.path.exists(elut_file):
+        print(f"File '{elut_file}' not found. Skipping ...")
+        continue
+
+    print(f"Parsing '{elut_file}' ...")
     elut_df = pd.read_csv(elut_file, sep='\t', index_col=0)
 
     #elut_df = elut_df.set_index('Unnamed: 0')
@@ -293,13 +299,13 @@ class elutionPairDataset(Dataset):
             if filterPearson:
                 # Remove low-Pearson samples from positive PPIs
                 pos_ppis_elut = [pppi for pppi in pos_ppis_elut if scipy.stats.pearsonr(
-                    torch.from_numpy(elut_df.T[list(pppi)[0]].values).float(),
-                    torch.from_numpy(elut_df.T[list(pppi)[1]].values).float())[0] >= 0.4]
+                    torch.from_numpy(elut_df.T[list(pppi)[0]].values.copy()).float(),
+                    torch.from_numpy(elut_df.T[list(pppi)[1]].values.copy()).float())[0] >= 0.4]
 
                 # Remove high-Pearson samples from negative PPIs
                 neg_ppis_elut = [nppi for nppi in neg_ppis_elut if scipy.stats.pearsonr(
-                    torch.from_numpy(elut_df.T[list(nppi)[0]].values).float(),
-                    torch.from_numpy(elut_df.T[list(nppi)[1]].values).float())[0] <= 0.6]
+                    torch.from_numpy(elut_df.T[list(nppi)[0]].values.copy()).float(),
+                    torch.from_numpy(elut_df.T[list(nppi)[1]].values.copy()).float())[0] <= 0.6]
 
             self.ppis = self.ppis + pos_ppis_elut + neg_ppis_elut
             self.labels = self.labels + [0]*len(pos_ppis_elut) + [1]*len(neg_ppis_elut)
@@ -319,8 +325,8 @@ class elutionPairDataset(Dataset):
         prot0 = pair[0]
         prot1 = pair[1]
 
-        elut0 = (prot0, torch.from_numpy(elut_df.T[pair[0]].values).float())
-        elut1 = (prot1, torch.from_numpy(elut_df.T[pair[1]].values).float())
+        elut0 = (prot0, torch.from_numpy(elut_df.T[pair[0]].values.copy()).float())
+        elut1 = (prot1, torch.from_numpy(elut_df.T[pair[1]].values.copy()).float())
 
         if self.transform:
             elut0 = (prot0, nn.functional.pad(elut0[1], (self.input_size - elut0[1].size()[0], 0)))
@@ -550,7 +556,7 @@ scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, f
 #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.1)
 
 # Zero the gradients
-#optimizer.zero_grad()
+optimizer.zero_grad()
 
 counter = []
 train_loss_hist = []
@@ -654,13 +660,7 @@ if trainNet:
             if i % SAMPLE_RATE == 0:
                 print(f"  Batch [{i} / {num_batches}]")
                 print(f"      Training Loss: {train_loss_contrastive.item():.4f}")
-                #print(f"      Training Loss:\n")
-                #print(f"        Scaled: {train_loss_contrastive.item()/len(elut0_train):.4f}")
-                #print(f"          True: {train_loss_contrastive.item():.4f}")
                 print(f"    Validation Loss: {valid_loss_contrastive.item():.4f}")
-                #print(f"    Validation Loss:\n")
-                #print(f"        Scaled: {valid_loss_contrastive.item()/len(elut0_valid):.4f}")
-                #print(f"          True: {valid_loss_contrastive.item():.4f}")
                 iteration_num += SAMPLE_RATE
 
                 counter.append(iteration_num)
@@ -669,20 +669,19 @@ if trainNet:
   
         # Produce training loss curve figure PNG
         plot_loss(counter, [train_loss_hist, valid_loss_hist], ["Training loss", "Validation Loss"], title="Contrastive Loss",
-                  xaxis="Batches", filename=f"{PARAMETER_FILENAME.split(".")[0]}_train_{epoch+1}.png")
+                  xaxis="Batches", filename=f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_train_{epoch+1}.png")
 
         # Test model on test set
         net.eval()
         with torch.no_grad():
             test_loss = 0.0
             for test_i, (test_elut0, test_elut1, test_label, test_elut_id) in enumerate(test_dataloader, 0):
-                pccListTest = []
                 # Obtain protein IDs
                 test_prot0, test_prot1 = test_elut0[0], test_elut1[0]
-                for test_ppi0, test_ppi1 in zip(test_elut0[1], test_elut1[1]):
-                    pccListTest.append(scipy.stats.pearsonr(test_ppi0[0], test_ppi1[0])[0])
+                #for test_ppi0, test_ppi1 in zip(test_elut0[1], test_elut1[1]):
+                #    pccListTest.append(scipy.stats.pearsonr(test_ppi0[0], test_ppi1[0])[0])
 
-                pcc = torch.tensor(pccListTest, dtype=torch.float32).cuda()
+                #pcc = torch.tensor(pccListTest, dtype=torch.float32).cuda()
 
                 # Send test elution data, labels to CUDA
                 test_elut0, test_elut1, test_label = test_elut0[1].cuda(), test_elut1[1].cuda(), test_label.cuda()
@@ -720,7 +719,7 @@ if trainNet:
             plot_loss(epoch_hist, [avg_test_loss_hist],
                       ["Testing loss"],
                       title="Average Contrastive Loss", xaxis="Epochs",
-                      filename=f"{PARAMETER_FILENAME.split(".")[0]}_epoch_{epoch+1}.png")
+                      filename=f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_epoch_{epoch+1}.png")
 
         # Early stopping according to user-defined threshold
         if avg_test_loss < EARLY_THRESHOLD:
@@ -737,18 +736,23 @@ test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
 subset_indices = torch.randperm(len(test_pos_elution_pair_dataset))[:SUBSET_SIZE]
 subset_test_pos_elution_pair_dataset = Subset(test_pos_elution_pair_dataset, subset_indices)
 
-test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset,
-                                 num_workers=1,
-                                 batch_size=1,
-                                 shuffle=True)
+if __FAST_TEST__:
+    test_pos_dataloader = DataLoader(subset_test_pos_elution_pair_dataset,
+                                     num_workers=1,
+                                     batch_size=1,
+                                     shuffle=True)
+else:
+    test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset,
+                                     num_workers=1,
+                                     batch_size=1,
+                                     shuffle=True)
 
-pos_ppi_euclidean_dist_list = []
-pos_ppi_pearson_list = []
-pos_ppi_conf_output_file = open(f"{PARAMETER_FILENAME.split(".")[0]}_pos_ppi_conf.txt", 'w')
-pos_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
-pos_ppi_conf_list = []
-pos_ppi_lab_list = []
+def count_open_fds():
+        return len(os.listdir(f'/proc/{os.getpid()}/fd'))
+
+pos_ppi_scores_list = []
 for i, (pos_elut0, pos_elut1, pos_label, elut_id) in enumerate(test_pos_dataloader):
+    #print(f"Iteration {i}, Open FDs: {count_open_fds()}")
 
     # Obtain protein IDs
     prot0, prot1 = pos_elut0[0], pos_elut1[0]
@@ -757,10 +761,7 @@ for i, (pos_elut0, pos_elut1, pos_label, elut_id) in enumerate(test_pos_dataload
     pos_elut0, pos_elut1 = pos_elut0[1], pos_elut1[1]
 
     # Obtain Pearson correlation
-    #if np.all(np.isfinite(pos_elut0[0][0])) and np.all(np.isfinite(pos_elut1[0][0])):
-    pos_ppi_pearson_list.append(scipy.stats.pearsonr(pos_elut0[0][0], pos_elut1[0][0])[0])
-    #else:
-    #    continue
+    pearson_corr = scipy.stats.pearsonr(pos_elut0[0][0], pos_elut1[0][0])[0]
 
     # Run model on data
     output1, output2 = net(pos_elut0.cuda(), pos_elut1.cuda())
@@ -771,18 +772,19 @@ for i, (pos_elut0, pos_elut1, pos_label, elut_id) in enumerate(test_pos_dataload
     # Get confidence score of similarity based on Euclidean distance
     confidence = euclidean_to_confidence(euclidean_dist, MAX_ED, SENSITIVITY)
 
-    # Write prediction to text file, with following line-wise format
-    #   prot1:prot2 euc_dist confidence label
-    pos_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{pos_ppi_pearson_list[i]:.4f}\t{confidence.item():.4f}\t{elut_id}\n")
-
-    pos_ppi_euclidean_dist_list.append(euclidean_dist.item())
-    pos_ppi_conf_list.append(confidence.item())
-    pos_ppi_lab_list.append(pos_label.item())
+    pos_ppi_scores_list.append({"ID1": str(prot0[0]),
+                                "ID2": str(prot1[0]),
+                                "Experiment": elut_id.item(),
+                                "Euclidean": euclidean_dist.item(),
+                                "Pearson": pearson_corr,
+                                "Confidence": confidence.item(),
+                                "Label": pos_label.item()})
 
     if i % 5 == 0:
         print(f"Calculating Euclidean distances, Pearson scores for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
-pos_ppi_conf_output_file.close()
 print("Calculating Euclidean distances, Pearson scores for positive pairwise interactions ... done            ")
+pos_scores_df = pd.DataFrame(pos_ppi_scores_list)
+
 
 # Run model and Pearson on negative PPIs only
 test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
@@ -792,19 +794,21 @@ test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
 subset_indices = torch.randperm(len(test_neg_elution_pair_dataset))[:SUBSET_SIZE]
 subset_test_neg_elution_pair_dataset = Subset(test_neg_elution_pair_dataset, subset_indices)
 
-test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset,
-                                 num_workers=1,
-                                 batch_size=1,
-                                 shuffle=True)
+if __FAST_TEST__:
+    test_neg_dataloader = DataLoader(subset_test_neg_elution_pair_dataset,
+                                     num_workers=1,
+                                     batch_size=1,
+                                     shuffle=True)
+else:
+    test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset,
+                                     num_workers=1,
+                                     batch_size=1,
+                                     shuffle=True)
 
 # Iterate over negative samples, getting Pearson scores and post-transform Euclidean distance for each PPI
-neg_ppi_euclidean_dist_list = []
-neg_ppi_pearson_list = []
-neg_ppi_conf_output_file = open(f"{PARAMETER_FILENAME.split(".")[0]}_neg_ppi_conf.txt", 'w')
-neg_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
-neg_ppi_conf_list = []
-neg_ppi_lab_list = []
+neg_ppi_scores_list = []
 for i, (neg_elut0, neg_elut1, neg_label, elut_id) in enumerate(test_neg_dataloader):
+    #print(f"Iteration {i}, Open FDs: {count_open_fds()}")
 
     # Obtain protein IDs
     prot0, prot1 = neg_elut0[0], neg_elut1[0]
@@ -813,7 +817,8 @@ for i, (neg_elut0, neg_elut1, neg_label, elut_id) in enumerate(test_neg_dataload
     neg_elut0, neg_elut1 = neg_elut0[1], neg_elut1[1]
 
     # Obtain Pearson correlation
-    neg_ppi_pearson_list.append(scipy.stats.pearsonr(neg_elut0[0][0], neg_elut1[0][0])[0])
+    #neg_ppi_pearson_list.append(scipy.stats.pearsonr(neg_elut0[0][0], neg_elut1[0][0])[0])
+    pearson_corr = scipy.stats.pearsonr(neg_elut0[0][0], neg_elut1[0][0])[0]
 
     # Run model on data
     output1, output2 = net(neg_elut0.cuda(), neg_elut1.cuda())
@@ -823,24 +828,30 @@ for i, (neg_elut0, neg_elut1, neg_label, elut_id) in enumerate(test_neg_dataload
 
     # Get confidence score of similarity based on Euclidean distance
     confidence = euclidean_to_confidence(euclidean_dist, MAX_ED, SENSITIVITY)
-    neg_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{neg_ppi_pearson_list[i]:.4f}\t{confidence.item():.4f}\t{elut_id}\n")
+    #neg_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{neg_ppi_pearson_list[i]:.4f}\t{confidence.item():.4f}\t{elut_id}\n")
 
-    neg_ppi_euclidean_dist_list.append(euclidean_dist.item())
-    neg_ppi_conf_list.append(confidence.item())
-    neg_ppi_lab_list.append(neg_label.item())
+    neg_ppi_scores_list.append({"ID1": str(prot0[0]),
+                                "ID2": str(prot1[0]),
+                                "Experiment": elut_id.item(),
+                                "Euclidean": euclidean_dist.item(),
+                                "Pearson": pearson_corr,
+                                "Confidence": confidence.item(),
+                                "Label": neg_label.item()})
+
 
     if i % 5 == 0:
         print(f"Calculating Euclidean distances, Pearson scores for negative pairwise interactions ... {i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
-neg_ppi_conf_output_file.close()
 print("Calculating Euclidean distances, Pearson scores for negative pairwise interactions ... done            ")
+neg_scores_df = pd.DataFrame(neg_ppi_scores_list)
+
 
 # Plot the PDF of the euclidean distance between positive and negative protein pairs
 x = np.linspace(-5,5,1000)
-mean_pos = np.mean(pos_ppi_euclidean_dist_list)
-mean_neg = np.mean(neg_ppi_euclidean_dist_list)
+mean_pos = np.mean(pos_scores_df[['Euclidean']].values)
+mean_neg = np.mean(neg_scores_df[['Euclidean']].values)
 diff_means_pos_neg_pdf = abs(mean_neg - mean_pos)
-y = norm.pdf(x, loc=mean_neg, scale=np.std(neg_ppi_euclidean_dist_list))
-y2 = norm.pdf(x, loc=mean_pos, scale=np.std(pos_ppi_euclidean_dist_list))
+y = norm.pdf(x, loc=mean_neg, scale=np.std(neg_scores_df[['Euclidean']].values))
+y2 = norm.pdf(x, loc=mean_pos, scale=np.std(pos_scores_df[['Euclidean']].values))
 
 pylab.plot(x,y,label="negative_pairs")
 pylab.plot(x,y2,label="positive_pairs")
@@ -848,40 +859,40 @@ pylab.annotate(f"{mean_pos}", (0.0, mean_pos))
 pylab.title("PDFs of Euclidean distances after model transform")
 pylab.legend()
 pylab.grid()
-pylab.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_EUCLIDEAN.png")
+pylab.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_EUCLIDEAN.png")
 pylab.clf()
 pylab.cla()
 
 
-sns.histplot(neg_ppi_euclidean_dist_list, alpha=0.5,
+sns.histplot(neg_scores_df[['Euclidean']].values, alpha=0.5,
              label='negative pairs')
-sns.histplot(pos_ppi_euclidean_dist_list, alpha=0.5, bins=25,
+sns.histplot(pos_scores_df[['Euclidean']].values, alpha=0.5, bins=25,
              label='positive pairs', color='orange')
 plt.title("Euclidean distance counts")
 plt.legend()
 plt.grid()
-plt.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_fig_hist_EUCLIDEAN.png")
+plt.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_fig_hist_EUCLIDEAN.png")
 pylab.clf()
 pylab.cla()
 
 # Plot the PDFs of the Pearson scores
 x = np.linspace(-2, 2, 1000)
-y = norm.pdf(x, loc=np.mean(neg_ppi_pearson_list), scale=np.std(neg_ppi_pearson_list))
-y2 = norm.pdf(x, loc=np.mean(pos_ppi_pearson_list), scale=np.std(pos_ppi_pearson_list))
+y = norm.pdf(x, loc=np.mean(neg_scores_df[['Pearson']].values), scale=np.std(neg_scores_df[['Pearson']].values))
+y2 = norm.pdf(x, loc=np.mean(pos_scores_df[['Pearson']].values), scale=np.std(pos_scores_df[['Pearson']].values))
 
 plt.plot(x,y,label="pearson_negative_pairs")
 plt.plot(x,y2,label="pearson_positive_pairs")
 plt.title("PDFs of Pearson scores")
 plt.legend()
 plt.grid()
-plt.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_PEARSON.png")
+plt.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_PEARSON.png")
 plt.clf()
 plt.cla()
 
 # Plot the counts of positive/negative Pearson scores
-sns.histplot(neg_ppi_pearson_list, alpha=0.5,
+sns.histplot(neg_scores_df[['Pearson']].values, alpha=0.5,
              label='negative pairs')
-sns.histplot(pos_ppi_pearson_list, alpha=0.5, bins=50,
+sns.histplot(pos_scores_df[['Pearson']].values, alpha=0.5, bins=50,
              label='positive pairs', color='orange')
 plt.title("Pearson score counts")
 plt.legend()
@@ -891,38 +902,32 @@ pylab.clf()
 pylab.cla()
 
 # Plot the euclidean distance against the Pearson score
-data_pearson_euclidean = {
-       'Euclidean Distance': pos_ppi_euclidean_dist_list + neg_ppi_euclidean_dist_list,
-       'Pearson Score': pos_ppi_pearson_list + neg_ppi_pearson_list,
-       'Label': ['Positive'] * len(pos_ppi_euclidean_dist_list) +
-                ['Negative'] * len(neg_ppi_euclidean_dist_list)
-    }
+scores_df = pd.DataFrame(pos_ppi_scores_list + neg_ppi_scores_list)
 
-df_pearson_euclidean = pd.DataFrame(data_pearson_euclidean).reset_index()
-df_pearson_euclidean = df_pearson_euclidean.melt(id_vars=['Label', 'Euclidean Distance', 'Pearson Score'])
-
+scores_df.to_csv(f"{PARAMETER_FILENAME.split(".")[0]}_test_scores.csv")
 # Plot the pearson scores for positive PPIs against the euclidean score
 #   Euclidean distance should be small, preferably as close to 0 as possible
-scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list, s=10)
+#scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list, s=10)
+scat1 = sns.scatterplot(data=pos_scores_df, x="Euclidean", y="Pearson", s=10)
 scat1.set_xlim(-1, 12)
 fig_scat1 = scat1.get_figure()
-fig_scat1.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_scatter.png")
+fig_scat1.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_scatter.png")
 fig_scat1.clf()
 
 # Plot a contour graph of the positive PPIs
 #   We want to make the glob near (0, 0) larger
-kde1 = sns.kdeplot(data=df_pearson_euclidean, x='Euclidean Distance', y='Pearson Score',
-                   common_norm=False, hue='Label', levels=15)
+kde1 = sns.kdeplot(data=scores_df, x="Euclidean", y="Pearson",
+                   common_norm=False, hue="Label", levels=15)
 kde1.set_xlim(-1, 12)
 fig_kde1 = kde1.get_figure()
-fig_kde1.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_kde.png")
+fig_kde1.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_kde.png")
 fig_kde1.clf()
 
 # Get labels, confidences, Euclidean distances, Pearson coefficients of test points
-y_labels = pos_ppi_lab_list + neg_ppi_lab_list
-y_confs = pos_ppi_conf_list + neg_ppi_conf_list
-y_dists = pos_ppi_euclidean_dist_list + neg_ppi_euclidean_dist_list
-y_pearson = pos_ppi_pearson_list + neg_ppi_pearson_list
+y_labels = pos_scores_df['Label'].tolist() + neg_scores_df['Label'].tolist()
+y_confs = pos_scores_df['Confidence'].tolist() + neg_scores_df['Confidence'].tolist()
+y_dists = pos_scores_df['Euclidean'].tolist() + neg_scores_df['Euclidean'].tolist()
+y_pearson = pos_scores_df['Pearson'].tolist() + neg_scores_df['Pearson'].tolist()
 
 
 # Invert y_labels series s.t. '1' is positive and '0' is negative
@@ -967,13 +972,13 @@ for i, y in enumerate(y_sort_pearson, start=1):
     print("Calculating precision-recall for Pearson ... done        ")
 
 # Plot Precision-Recall curves of Euclidean distance and Pearson as PPI predictors
-#plt.plot(recall_euclidean, precision_euclidean, color='blue')
+plt.plot(recall_euclidean, precision_euclidean, color='blue')
 plt.plot(recall_pearson, precision_pearson, color='orange')
 plt.title("PR Curve")
 plt.xlabel("Recall")
 plt.ylabel("Precision")
 plt.legend(["Euclidean PR", "Pearson PR"])
-plt.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pr_curve.png")
+plt.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pr_curve.png")
 plt.clf()
 plt.cla()
 
@@ -987,7 +992,6 @@ with open(f"{PARAMETER_FILENAME.split(".")[0]}_results-final.log", 'w') as outFi
     outFile.write(f"Difference Between ED Means of Pos/Neg PPIs: {diff_means_pos_neg_pdf:.4f}\n")
     outFile.write(f"Area Under Euclidean PR Curve: {aupr_euclidean:.4f}\n")
     outFile.write(f"Area Under Pearson PR Curve: {aupr_pearson:.4f}\n")
-outFile.close()
 
 for k, elut in enumerate(elut_list):
     # Run model and Pearson on positive PPIs only
@@ -995,21 +999,20 @@ for k, elut in enumerate(elut_list):
                                                        pos_ppis=test_pos_ppis,
                                                        neg_ppis=[],
                                                        transform=True)
-    print(len(test_pos_elution_pair_dataset))
 
     subset_indices = torch.randperm(len(test_pos_elution_pair_dataset))[:SUBSET_SIZE]
     subset_test_pos_elution_pair_dataset = Subset(test_pos_elution_pair_dataset, subset_indices)
 
-    test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset,
-                                     num_workers=1,
-                                     batch_size=1)
+    if __FAST_TEST__:
+        test_pos_dataloader = DataLoader(subset_test_pos_elution_pair_dataset,
+                                         num_workers=1,
+                                         batch_size=1)
+    else:
+        test_pos_dataloader = DataLoader(test_pos_elution_pair_dataset,
+                                         num_workers=1,
+                                         batch_size=1)
 
-    pos_ppi_euclidean_dist_list = []
-    pos_ppi_pearson_list = []
-    pos_ppi_conf_output_file = open(f"{PARAMETER_FILENAME.split(".")[0]}_pos_ppi_conf_{k+1}.txt", 'w')
-    pos_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
-    pos_ppi_conf_list = []
-    pos_ppi_lab_list = []
+    pos_ppi_scores_list = []
     if len(test_pos_elution_pair_dataset) > 0:
         for i, (pos_elut0, pos_elut1, pos_label, elut_id) in enumerate(test_pos_dataloader):
 
@@ -1020,7 +1023,7 @@ for k, elut in enumerate(elut_list):
             pos_elut0, pos_elut1 = pos_elut0[1], pos_elut1[1]
 
             # Obtain Pearson correlation
-            pos_ppi_pearson_list.append(scipy.stats.pearsonr(pos_elut0[0][0], pos_elut1[0][0])[0])
+            pearson_corr = scipy.stats.pearsonr(pos_elut0[0][0], pos_elut1[0][0])[0]
 
             # Run model on data
             output1, output2 = net(pos_elut0.cuda(), pos_elut1.cuda())
@@ -1031,20 +1034,21 @@ for k, elut in enumerate(elut_list):
             # Get confidence score of similarity based on Euclidean distance
             confidence = euclidean_to_confidence(euclidean_dist, MAX_ED, SENSITIVITY)
 
-            # Write prediction to text file, with following line-wise format
-            #   prot1:prot2 euc_dist confidence label
-            pos_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{pos_ppi_pearson_list[i]:.4f}\t{confidence.item():.4f}\t{elut_id}\n")
+            pos_ppi_scores_list.append({"ID1": str(prot0[0]),
+                                        "ID2": str(prot1[0]),
+                                        "Experiment": elut_id.item(),
+                                        "Euclidean": euclidean_dist.item(),
+                                        "Pearson": pearson_corr,
+                                        "Confidence": confidence.item(),
+                                        "Label": pos_label.item()})
 
-            pos_ppi_euclidean_dist_list.append(euclidean_dist.item())
-            pos_ppi_conf_list.append(confidence.item())
-            pos_ppi_lab_list.append(pos_label.item())
+
         
             if i % 5 == 0:
                 print(f"Calculating Euclidean distances, Pearson scores for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
-        #pos_ppi_conf_output_file.close()
-        print("Calculating Euclidean distances, Pearson scores for positive pairwise interactions ... done            ")
     else:
         print("Dataset is empty!")
+    pos_scores_df = pd.DataFrame(pos_ppi_scores_list)
 
     # Run model and Pearson on negative PPIs only
     test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=[elut],
@@ -1054,17 +1058,17 @@ for k, elut in enumerate(elut_list):
     subset_indices = torch.randperm(len(test_neg_elution_pair_dataset))[:SUBSET_SIZE]
     subset_test_neg_elution_pair_dataset = Subset(test_neg_elution_pair_dataset, subset_indices)
 
-    test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset,
-                                     num_workers=1,
-                                     batch_size=1)
+    if __FAST_TEST__:
+        test_neg_dataloader = DataLoader(subset_test_neg_elution_pair_dataset,
+                                         num_workers=1,
+                                         batch_size=1)
+    else:
+        test_neg_dataloader = DataLoader(test_neg_elution_pair_dataset,
+                                         num_workers=1,
+                                         batch_size=1)
 
     # Iterate over negative samples, getting Pearson scores and post-transform Euclidean distance for each PPI
-    neg_ppi_euclidean_dist_list = []
-    neg_ppi_pearson_list = []
-    neg_ppi_conf_output_file = open(f"{PARAMETER_FILENAME.split(".")[0]}_neg_ppi_conf_{k+1}.txt", 'w')
-    neg_ppi_conf_output_file.write("PPI\tEuclidean Distance\tPearson Score\tConfidence Score\n")
-    neg_ppi_conf_list = []
-    neg_ppi_lab_list = []
+    neg_ppi_scores_list = []
     for i, (neg_elut0, neg_elut1, neg_label, elut_id) in enumerate(test_neg_dataloader):
 
         # Obtain protein IDs
@@ -1074,7 +1078,7 @@ for k, elut in enumerate(elut_list):
         neg_elut0, neg_elut1 = neg_elut0[1], neg_elut1[1]
 
         # Obtain Pearson correlation
-        neg_ppi_pearson_list.append(scipy.stats.pearsonr(neg_elut0[0][0], neg_elut1[0][0])[0])
+        pearson_corr = scipy.stats.pearsonr(neg_elut0[0][0], neg_elut1[0][0])[0]
 
         # Run model on data
         output1, output2 = net(neg_elut0.cuda(), neg_elut1.cuda())
@@ -1084,24 +1088,29 @@ for k, elut in enumerate(elut_list):
 
         # Get confidence score of similarity based on Euclidean distance
         confidence = euclidean_to_confidence(euclidean_dist, MAX_ED, SENSITIVITY)
-        neg_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{neg_ppi_pearson_list[i]:.4f}\t{confidence.item():.4f}\t{elut_id}\n")
+        #neg_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{neg_ppi_pearson_list[i]:.4f}\t{confidence.item():.4f}\t{elut_id}\n")
 
-        neg_ppi_euclidean_dist_list.append(euclidean_dist.item())
-        neg_ppi_conf_list.append(confidence.item())
-        neg_ppi_lab_list.append(neg_label.item())
+        neg_ppi_scores_list.append({"ID1": str(prot0[0]),
+                                    "ID2": str(prot1[0]),
+                                    "Experiment": elut_id.item(),
+                                    "Euclidean": euclidean_dist.item(),
+                                    "Pearson": pearson_corr,
+                                    "Confidence": confidence.item(),
+                                    "Label": neg_label.item()})
+
 
         if i % 5 == 0:
             print(f"Calculating Euclidean distances, Pearson scores for negative pairwise interactions ... {i * 100 / len(test_neg_dataloader):.2f} %", end='\r')
-    neg_ppi_conf_output_file.close()
+    neg_scores_df = pd.DataFrame(neg_ppi_scores_list)
     print("Calculating Euclidean distances, Pearson scores for negative pairwise interactions ... done            ")
 
     # Plot the PDF of the euclidean distance between positive and negative protein pairs
     x = np.linspace(-5,5,1000)
-    mean_pos = np.mean(pos_ppi_euclidean_dist_list)
-    mean_neg = np.mean(neg_ppi_euclidean_dist_list)
+    mean_pos = np.mean(pos_scores_df['Euclidean'].tolist())
+    mean_neg = np.mean(neg_scores_df['Euclidean'].tolist())
     diff_means_pos_neg_pdf = abs(mean_neg - mean_pos)
-    y = norm.pdf(x, loc=mean_neg, scale=np.std(neg_ppi_euclidean_dist_list))
-    y2 = norm.pdf(x, loc=mean_pos, scale=np.std(pos_ppi_euclidean_dist_list))
+    y = norm.pdf(x, loc=mean_neg, scale=np.std(neg_scores_df['Euclidean'].tolist()))
+    y2 = norm.pdf(x, loc=mean_pos, scale=np.std(pos_scores_df['Euclidean'].tolist()))
 
     pylab.plot(x,y,label="negative_pairs")
     pylab.plot(x,y2,label="positive_pairs")
@@ -1109,80 +1118,76 @@ for k, elut in enumerate(elut_list):
     pylab.title("PDFs of Euclidean distances after model transform")
     pylab.legend()
     pylab.grid()
-    pylab.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_EUCLIDEAN_{k+1}.png")
+    pylab.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_EUCLIDEAN_{k+1}.png")
     pylab.clf()
     pylab.cla()
 
 
-    sns.histplot(neg_ppi_euclidean_dist_list, alpha=0.5,
+    sns.histplot(neg_scores_df['Euclidean'].tolist(), alpha=0.5,
                  label='negative pairs')
-    sns.histplot(pos_ppi_euclidean_dist_list, alpha=0.5, bins=25,
+    sns.histplot(pos_scores_df['Euclidean'].tolist(), alpha=0.5, bins=25,
                  label='positive pairs', color='orange')
     plt.title("Euclidean distance counts")
     plt.legend()
     plt.grid()
-    plt.savefig(f"f{PARAMETER_FILENAME.split(".")[0]}_ig_hist_EUCLIDEAN_{k+1}.png")
+    plt.savefig(f"{FIGURES_DIRECTORY}/f{PARAMETER_FILENAME.split(".")[0]}_ig_hist_EUCLIDEAN_{k+1}.png")
     pylab.clf()
     pylab.cla()
 
     # Plot the PDFs of the Pearson scores
     x = np.linspace(-2, 2, 1000)
-    y = norm.pdf(x, loc=np.mean(neg_ppi_pearson_list), scale=np.std(neg_ppi_pearson_list))
-    y2 = norm.pdf(x, loc=np.mean(pos_ppi_pearson_list), scale=np.std(pos_ppi_pearson_list))
+    y = norm.pdf(x, loc=np.mean(neg_scores_df['Pearson'].tolist()), scale=np.std(neg_scores_df['Pearson'].tolist()))
+    y2 = norm.pdf(x, loc=np.mean(pos_scores_df['Pearson'].tolist()), scale=np.std(neg_scores_df['Pearson'].tolist()))
     plt.plot(x,y,label="pearson_negative_pairs")
     plt.plot(x,y2,label="pearson_positive_pairs")
     plt.title("PDFs of Pearson scores")
     plt.legend()
     plt.grid()
-    plt.savefig(f"p{PARAMETER_FILENAME.split(".")[0]}_os_neg_pairs_PEARSON_{k+1}.png")
+    plt.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_PEARSON_{k+1}.png")
     plt.clf()
     plt.cla()
 
     # Plot the counts of positive/negative Pearson scores
-    sns.histplot(neg_ppi_pearson_list, alpha=0.5,
+    sns.histplot(neg_scores_df['Pearson'].tolist(), alpha=0.5,
                  label='negative pairs')
-    sns.histplot(pos_ppi_pearson_list, alpha=0.5, bins=50,
+    sns.histplot(pos_scores_df['Pearson'].tolist(), alpha=0.5, bins=50,
                  label='positive pairs', color='orange')
     plt.title(f"Pearson score counts")
     plt.legend()
     plt.grid()
-    plt.savefig(f"f{PARAMETER_FILENAME.split(".")[0]}_ig_hist_PEARSON_{k+1}.png")
+    plt.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_fig_hist_PEARSON_{k+1}.png")
     pylab.clf()
     pylab.cla()
 
     # Plot the euclidean distance against the Pearson score
-    data_pearson_euclidean = {
-            'Euclidean Distance': pos_ppi_euclidean_dist_list + neg_ppi_euclidean_dist_list,
-            'Pearson Score': pos_ppi_pearson_list + neg_ppi_pearson_list,
-            'Label': ['Positive'] * len(pos_ppi_euclidean_dist_list) +
-                     ['Negative'] * len(neg_ppi_euclidean_dist_list)
-    }
+    scores_df = pd.DataFrame(pos_ppi_scores_list + neg_ppi_scores_list)
 
-    df_pearson_euclidean = pd.DataFrame(data_pearson_euclidean).reset_index()
-    df_pearson_euclidean = df_pearson_euclidean.melt(id_vars=['Label', 'Euclidean Distance', 'Pearson Score'])
+    #scores_df.to_csv(f"{PARAMETER_FILENAME.split(".")[0]}_test_scores.csv")
+
 
     # Plot the pearson scores for positive PPIs against the euclidean score
     #   Euclidean distance should be small, preferably as close to 0 as possible
-    scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list, s=10)
+    #scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list, s=10)
+    scat1 = sns.scatterplot(data=pos_scores_df, x="Euclidean", y="Pearson", s=10)
     scat1.set_xlim(-1, 12)
     fig_scat1 = scat1.get_figure()
-    fig_scat1.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_pos_scatter_{k+1}.png")
+    fig_scat1.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_pos_scatter_{k+1}.png")
     fig_scat1.clf()
 
     # Plot a contour graph of the positive PPIs
     #   We want to make the glob near (0, 0) larger
-    kde1 = sns.kdeplot(data=df_pearson_euclidean, x='Euclidean Distance', y='Pearson Score',
+    kde1 = sns.kdeplot(data=scores_df, x='Euclidean', y='Pearson',
                        common_norm=False, hue='Label', levels=15)
     kde1.set_xlim(-1, 12)
     fig_kde1 = kde1.get_figure()
-    fig_kde1.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_contour_{k+1}.png")
+    fig_kde1.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_contour_{k+1}.png")
     fig_kde1.clf()
 
     # Get labels, confidences, Euclidean distances, Pearson coefficients of test points
-    y_labels = pos_ppi_lab_list + neg_ppi_lab_list
-    y_confs = pos_ppi_conf_list + neg_ppi_conf_list
-    y_dists = pos_ppi_euclidean_dist_list + neg_ppi_euclidean_dist_list
-    y_pearson = pos_ppi_pearson_list + neg_ppi_pearson_list
+    y_labels = pos_scores_df['Label'].tolist() + neg_scores_df['Label'].tolist()
+    y_confs = pos_scores_df['Confidence'].tolist() + neg_scores_df['Confidence'].tolist()
+    y_dists = pos_scores_df['Euclidean'].tolist() + neg_scores_df['Euclidean'].tolist()
+    y_pearson = pos_scores_df['Pearson'].tolist() + neg_scores_df['Pearson'].tolist()
 
 
     # Invert y_labels series s.t. '1' is positive and '0' is negative
@@ -1233,7 +1238,7 @@ for k, elut in enumerate(elut_list):
     plt.title("PR Curve")
     plt.xlabel("Recall")
     plt.ylabel("Precision")
-    plt.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_pr_curve_{k+1}.png")
+    plt.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pr_curve_{k+1}.png")
     plt.legend(["Euclidean PR", "Pearson PR"])
     plt.clf()
     plt.cla()
@@ -1248,4 +1253,3 @@ for k, elut in enumerate(elut_list):
         outFile.write(f"Difference Between ED Means of Pos/Neg PPIs: {diff_means_pos_neg_pdf:.4f}\n")
         outFile.write(f"Area Under Euclidean PR Curve: {aupr_euclidean:.4f}\n")
         outFile.write(f"Area Under Pearson PR Curve: {aupr_pearson:.4f}\n")
-        outFile.close()
