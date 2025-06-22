@@ -69,9 +69,9 @@ import os
 # Use random subset samples for speeding up run on test sets during debugging
 __FAST_TEST__ = False
 PARAMETER_FILENAME = "cfms_ppi_network_bdlstm_adam_1e-4_256.pt"
-FIGURES_DIRECTORY = "figs"
-if not os.path.exists({FIGURES_DIRECTORY}):
-    FIGURES_DIRECTORY.mkdir()
+FIGURES_DIRECTORY = f"{PARAMETER_FILENAME.split(".")[0]}_figs"
+if not os.path.exists(FIGURES_DIRECTORY):
+    os.makedirs(FIGURES_DIRECTORY)
 
 # Program parameters
 SEED = 5123
@@ -311,8 +311,9 @@ class elutionPairDataset(Dataset):
             self.labels = self.labels + [0]*len(pos_ppis_elut) + [1]*len(neg_ppis_elut)
             self.ppis_elut_ids = self.ppis_elut_ids + [elut_id]*len(pos_ppis_elut) + [elut_id]*len(neg_ppis_elut)
 
-        print(f"Number of positive PPIs: {numPos}")
-        print(f"Number of negative PPIs: {numNeg}")
+        print(f"Total number of pairs: {len(self.ppis)}")
+        print(f"  Number of positive pairs: {numPos}")
+        print(f"  Number of negative pairs: {numNeg}")
 
         self.transform = transform
         self.input_size = input_size
@@ -351,22 +352,21 @@ class elutionPairDataset(Dataset):
 # =======================================================================================
 
 # Instantiate the training dataset for the model
+print("Assembling training set ...")
 train_siamese_dataset = elutionPairDataset(elutdf_list=elut_list,
                                            pos_ppis = train_pos_ppis,
                                            neg_ppis = train_neg_ppis,
                                            transform=True)
-print("Training set assembled")
-print(f"  Number of samples: {len(train_siamese_dataset)}")
 
 # Instantiate the validation dataset for the model
+print("Assembling validation set ...")
 valid_siamese_dataset = elutionPairDataset(elutdf_list=elut_list,
                                            pos_ppis = valid_pos_ppis,
                                            neg_ppis = valid_neg_ppis,
                                            transform=True)
-print("Validation set assembled")
-print(f"  Number of samples: {len(valid_siamese_dataset)}")
 
 # Instantiate the test dataset for the model
+print("Assembling test set ...")
 test_siamese_dataset = elutionPairDataset(elutdf_list=elut_list,
                                           pos_ppis = test_pos_ppis,
                                           neg_ppis = test_neg_ppis,
@@ -374,8 +374,6 @@ test_siamese_dataset = elutionPairDataset(elutdf_list=elut_list,
 
 subset_indices = torch.randperm(len(test_siamese_dataset))[:SUBSET_SIZE]
 subset_test_siamese_dataset = Subset(test_siamese_dataset, subset_indices)
-print("Test set assembled")
-print(f"  Number of samples: {len(test_siamese_dataset)}")
 
 
 class PositionalEncoding(nn.Module):
@@ -907,8 +905,8 @@ scores_df = pd.DataFrame(pos_ppi_scores_list + neg_ppi_scores_list)
 scores_df.to_csv(f"{PARAMETER_FILENAME.split(".")[0]}_test_scores.csv")
 # Plot the pearson scores for positive PPIs against the euclidean score
 #   Euclidean distance should be small, preferably as close to 0 as possible
-#scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list, s=10)
-scat1 = sns.scatterplot(data=pos_scores_df, x="Euclidean", y="Pearson", s=10)
+scat1 = sns.scatterplot(data=scores_df, x="Euclidean", y="Pearson",
+                        hue="Label", s=10)
 scat1.set_xlim(-1, 12)
 fig_scat1 = scat1.get_figure()
 fig_scat1.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_scatter.png")
@@ -994,6 +992,13 @@ with open(f"{PARAMETER_FILENAME.split(".")[0]}_results-final.log", 'w') as outFi
     outFile.write(f"Area Under Pearson PR Curve: {aupr_pearson:.4f}\n")
 
 for k, elut in enumerate(elut_list):
+
+    elut_data_filename = elut_data[k].split(".")[0]
+    curr_figs_directory = f"{FIGURES_DIRECTORY}/{elut_data_filename.split(".")[0]}"
+
+    if not os.path.exists(curr_figs_directory):
+        os.makedirs(curr_figs_directory)
+
     # Run model and Pearson on positive PPIs only
     test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=[elut],
                                                        pos_ppis=test_pos_ppis,
@@ -1118,7 +1123,7 @@ for k, elut in enumerate(elut_list):
     pylab.title("PDFs of Euclidean distances after model transform")
     pylab.legend()
     pylab.grid()
-    pylab.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_EUCLIDEAN_{k+1}.png")
+    pylab.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_EUCLIDEAN_{elut_data_filename}.png")
     pylab.clf()
     pylab.cla()
 
@@ -1130,7 +1135,7 @@ for k, elut in enumerate(elut_list):
     plt.title("Euclidean distance counts")
     plt.legend()
     plt.grid()
-    plt.savefig(f"{FIGURES_DIRECTORY}/f{PARAMETER_FILENAME.split(".")[0]}_ig_hist_EUCLIDEAN_{k+1}.png")
+    plt.savefig(f"{curr_figs_directory}/f{PARAMETER_FILENAME.split(".")[0]}_ig_hist_EUCLIDEAN_{elut_data_filename}.png")
     pylab.clf()
     pylab.cla()
 
@@ -1143,7 +1148,7 @@ for k, elut in enumerate(elut_list):
     plt.title("PDFs of Pearson scores")
     plt.legend()
     plt.grid()
-    plt.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_PEARSON_{k+1}.png")
+    plt.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_PEARSON_{elut_data_filename}.png")
     plt.clf()
     plt.cla()
 
@@ -1155,7 +1160,7 @@ for k, elut in enumerate(elut_list):
     plt.title(f"Pearson score counts")
     plt.legend()
     plt.grid()
-    plt.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_fig_hist_PEARSON_{k+1}.png")
+    plt.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_fig_hist_PEARSON_{elut_data_filename}.png")
     pylab.clf()
     pylab.cla()
 
@@ -1167,11 +1172,11 @@ for k, elut in enumerate(elut_list):
 
     # Plot the pearson scores for positive PPIs against the euclidean score
     #   Euclidean distance should be small, preferably as close to 0 as possible
-    #scat1 = sns.scatterplot(pos_ppi_euclidean_dist_list, pos_ppi_pearson_list, s=10)
-    scat1 = sns.scatterplot(data=pos_scores_df, x="Euclidean", y="Pearson", s=10)
+    scat1 = sns.scatterplot(data=scores_df, x="Euclidean", y="Pearson",
+                            hue="Label", s=10)
     scat1.set_xlim(-1, 12)
     fig_scat1 = scat1.get_figure()
-    fig_scat1.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_pos_scatter_{k+1}.png")
+    fig_scat1.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_pos_scatter_{elut_data_filename}.png")
     fig_scat1.clf()
 
     # Plot a contour graph of the positive PPIs
@@ -1180,7 +1185,7 @@ for k, elut in enumerate(elut_list):
                        common_norm=False, hue='Label', levels=15)
     kde1.set_xlim(-1, 12)
     fig_kde1 = kde1.get_figure()
-    fig_kde1.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_contour_{k+1}.png")
+    fig_kde1.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_contour_{elut_data_filename}.png")
     fig_kde1.clf()
 
     # Get labels, confidences, Euclidean distances, Pearson coefficients of test points
@@ -1238,7 +1243,7 @@ for k, elut in enumerate(elut_list):
     plt.title("PR Curve")
     plt.xlabel("Recall")
     plt.ylabel("Precision")
-    plt.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pr_curve_{k+1}.png")
+    plt.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_pr_curve_{elut_data_filename}.png")
     plt.legend(["Euclidean PR", "Pearson PR"])
     plt.clf()
     plt.cla()
