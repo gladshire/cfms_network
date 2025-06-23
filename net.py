@@ -67,7 +67,7 @@ import sys
 import os
 
 # Use random subset samples for speeding up run on test sets during debugging
-__FAST_TEST__ = False
+__FAST_TEST__ = True
 PARAMETER_FILENAME = "cfms_ppi_network_bdlstm_adam_1e-4_256.pt"
 FIGURES_DIRECTORY = f"{PARAMETER_FILENAME.split(".")[0]}_figs"
 if not os.path.exists(FIGURES_DIRECTORY):
@@ -770,13 +770,22 @@ for i, (pos_elut0, pos_elut1, pos_label, elut_id) in enumerate(test_pos_dataload
     # Get confidence score of similarity based on Euclidean distance
     confidence = euclidean_to_confidence(euclidean_dist, MAX_ED, SENSITIVITY)
 
-    pos_ppi_scores_list.append({"ID1": str(prot0[0]),
-                                "ID2": str(prot1[0]),
-                                "Experiment": elut_id.item(),
-                                "Euclidean": euclidean_dist.item(),
-                                "Pearson": pearson_corr,
-                                "Confidence": confidence.item(),
-                                "Label": pos_label.item()})
+    trace1 = pos_elut0[0][0].detach().cpu().tolist()
+    trace2 = pos_elut1[0][0].detach().cpu().tolist()
+
+    curr_record = {"id1": str(prot0[0]),
+                   "id2": str(prot1[0]),
+                   "experiment": elut_id.item(),
+                   "euclidean": euclidean_dist.item(),
+                   "pearson": pearson_corr,
+                   "confidence": confidence.item(),
+                   "label": pos_label.item()}
+
+    curr_record.update({f"trace1_{i}": v for i, v in enumerate(trace1)})
+    curr_record.update({f"trace2_{i}": v for i, v in enumerate(trace2)})
+
+    pos_ppi_scores_list.append(curr_record)
+
 
     if i % 5 == 0:
         print(f"Calculating Euclidean distances, Pearson scores for positive pairwise interactions ... {i * 100 / len(test_pos_dataloader):.2f} %", end='\r')
@@ -828,13 +837,21 @@ for i, (neg_elut0, neg_elut1, neg_label, elut_id) in enumerate(test_neg_dataload
     confidence = euclidean_to_confidence(euclidean_dist, MAX_ED, SENSITIVITY)
     #neg_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{neg_ppi_pearson_list[i]:.4f}\t{confidence.item():.4f}\t{elut_id}\n")
 
-    neg_ppi_scores_list.append({"ID1": str(prot0[0]),
-                                "ID2": str(prot1[0]),
-                                "Experiment": elut_id.item(),
-                                "Euclidean": euclidean_dist.item(),
-                                "Pearson": pearson_corr,
-                                "Confidence": confidence.item(),
-                                "Label": neg_label.item()})
+    trace1 = neg_elut0[0][0].detach().cpu().tolist()
+    trace2 = neg_elut1[0][0].detach().cpu().tolist()
+
+    curr_record = {"id1": str(prot0[0]),
+                   "id2": str(prot1[0]),
+                   "experiment": elut_id.item(),
+                   "euclidean": euclidean_dist.item(),
+                   "pearson": pearson_corr,
+                   "confidence": confidence.item(),
+                   "label": neg_label.item()}
+    
+    curr_record.update({f"trace1_{i}": v for i, v in enumerate(trace1)})
+    curr_record.update({f"trace2_{i}": v for i, v in enumerate(trace2)})
+    
+    neg_ppi_scores_list.append(curr_record)
 
 
     if i % 5 == 0:
@@ -845,11 +862,11 @@ neg_scores_df = pd.DataFrame(neg_ppi_scores_list)
 
 # Plot the PDF of the euclidean distance between positive and negative protein pairs
 x = np.linspace(-5,5,1000)
-mean_pos = np.mean(pos_scores_df[['Euclidean']].values)
-mean_neg = np.mean(neg_scores_df[['Euclidean']].values)
+mean_pos = np.mean(pos_scores_df[['euclidean']].values)
+mean_neg = np.mean(neg_scores_df[['euclidean']].values)
 diff_means_pos_neg_pdf = abs(mean_neg - mean_pos)
-y = norm.pdf(x, loc=mean_neg, scale=np.std(neg_scores_df[['Euclidean']].values))
-y2 = norm.pdf(x, loc=mean_pos, scale=np.std(pos_scores_df[['Euclidean']].values))
+y = norm.pdf(x, loc=mean_neg, scale=np.std(neg_scores_df[['euclidean']].values))
+y2 = norm.pdf(x, loc=mean_pos, scale=np.std(pos_scores_df[['euclidean']].values))
 
 pylab.plot(x,y,label="negative_pairs")
 pylab.plot(x,y2,label="positive_pairs")
@@ -862,9 +879,9 @@ pylab.clf()
 pylab.cla()
 
 
-sns.histplot(neg_scores_df[['Euclidean']].values, alpha=0.5,
+sns.histplot(neg_scores_df[['euclidean']].values, alpha=0.5,
              label='negative pairs')
-sns.histplot(pos_scores_df[['Euclidean']].values, alpha=0.5, bins=25,
+sns.histplot(pos_scores_df[['euclidean']].values, alpha=0.5, bins=25,
              label='positive pairs', color='orange')
 plt.title("Euclidean distance counts")
 plt.legend()
@@ -875,8 +892,8 @@ pylab.cla()
 
 # Plot the PDFs of the Pearson scores
 x = np.linspace(-2, 2, 1000)
-y = norm.pdf(x, loc=np.mean(neg_scores_df[['Pearson']].values), scale=np.std(neg_scores_df[['Pearson']].values))
-y2 = norm.pdf(x, loc=np.mean(pos_scores_df[['Pearson']].values), scale=np.std(pos_scores_df[['Pearson']].values))
+y = norm.pdf(x, loc=np.mean(neg_scores_df[['pearson']].values), scale=np.std(neg_scores_df[['pearson']].values))
+y2 = norm.pdf(x, loc=np.mean(pos_scores_df[['pearson']].values), scale=np.std(pos_scores_df[['pearson']].values))
 
 plt.plot(x,y,label="pearson_negative_pairs")
 plt.plot(x,y2,label="pearson_positive_pairs")
@@ -888,9 +905,9 @@ plt.clf()
 plt.cla()
 
 # Plot the counts of positive/negative Pearson scores
-sns.histplot(neg_scores_df[['Pearson']].values, alpha=0.5,
+sns.histplot(neg_scores_df[['pearson']].values, alpha=0.5,
              label='negative pairs')
-sns.histplot(pos_scores_df[['Pearson']].values, alpha=0.5, bins=50,
+sns.histplot(pos_scores_df[['pearson']].values, alpha=0.5, bins=50,
              label='positive pairs', color='orange')
 plt.title("Pearson score counts")
 plt.legend()
@@ -905,8 +922,8 @@ scores_df = pd.DataFrame(pos_ppi_scores_list + neg_ppi_scores_list)
 scores_df.to_csv(f"{PARAMETER_FILENAME.split(".")[0]}_test_scores.csv")
 # Plot the pearson scores for positive PPIs against the euclidean score
 #   Euclidean distance should be small, preferably as close to 0 as possible
-scat1 = sns.scatterplot(data=scores_df, x="Euclidean", y="Pearson",
-                        hue="Label", s=10)
+scat1 = sns.scatterplot(data=scores_df, x="euclidean", y="pearson",
+                        hue="label", s=10)
 scat1.set_xlim(-1, 12)
 fig_scat1 = scat1.get_figure()
 fig_scat1.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_scatter.png")
@@ -914,18 +931,18 @@ fig_scat1.clf()
 
 # Plot a contour graph of the positive PPIs
 #   We want to make the glob near (0, 0) larger
-kde1 = sns.kdeplot(data=scores_df, x="Euclidean", y="Pearson",
-                   common_norm=False, hue="Label", levels=15)
+kde1 = sns.kdeplot(data=scores_df, x="euclidean", y="pearson",
+                   common_norm=False, hue="label", levels=15)
 kde1.set_xlim(-1, 12)
 fig_kde1 = kde1.get_figure()
 fig_kde1.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_kde.png")
 fig_kde1.clf()
 
 # Get labels, confidences, Euclidean distances, Pearson coefficients of test points
-y_labels = pos_scores_df['Label'].tolist() + neg_scores_df['Label'].tolist()
-y_confs = pos_scores_df['Confidence'].tolist() + neg_scores_df['Confidence'].tolist()
-y_dists = pos_scores_df['Euclidean'].tolist() + neg_scores_df['Euclidean'].tolist()
-y_pearson = pos_scores_df['Pearson'].tolist() + neg_scores_df['Pearson'].tolist()
+y_labels = pos_scores_df['label'].tolist() + neg_scores_df['label'].tolist()
+y_confs = pos_scores_df['confidence'].tolist() + neg_scores_df['confidence'].tolist()
+y_dists = pos_scores_df['euclidean'].tolist() + neg_scores_df['euclidean'].tolist()
+y_pearson = pos_scores_df['pearson'].tolist() + neg_scores_df['pearson'].tolist()
 
 
 # Invert y_labels series s.t. '1' is positive and '0' is negative
@@ -993,8 +1010,9 @@ with open(f"{PARAMETER_FILENAME.split(".")[0]}_results-final.log", 'w') as outFi
 
 for k, elut in enumerate(elut_list):
 
-    elut_data_filename = elut_data[k].split(".")[0]
-    curr_figs_directory = f"{FIGURES_DIRECTORY}/{elut_data_filename.split(".")[0]}"
+    elut_data_filename = elut_data[k].split("/")[-1]
+    elut_data_filebase = elut_data_filename.split(".")[0]
+    curr_figs_directory = f"{FIGURES_DIRECTORY}/{elut_data_filebase}"
 
     if not os.path.exists(curr_figs_directory):
         os.makedirs(curr_figs_directory)
@@ -1039,13 +1057,23 @@ for k, elut in enumerate(elut_list):
             # Get confidence score of similarity based on Euclidean distance
             confidence = euclidean_to_confidence(euclidean_dist, MAX_ED, SENSITIVITY)
 
-            pos_ppi_scores_list.append({"ID1": str(prot0[0]),
-                                        "ID2": str(prot1[0]),
-                                        "Experiment": elut_id.item(),
-                                        "Euclidean": euclidean_dist.item(),
-                                        "Pearson": pearson_corr,
-                                        "Confidence": confidence.item(),
-                                        "Label": pos_label.item()})
+
+
+            trace1 = pos_elut0[0][0].detach().cpu().tolist()
+            trace2 = pos_elut1[0][0].detach().cpu().tolist()
+
+            curr_record = {"id1": str(prot0[0]),
+                           "id2": str(prot1[0]),
+                           "experiment": elut_id.item(),
+                           "euclidean": euclidean_dist.item(),
+                           "pearson": pearson_corr,
+                           "confidence": confidence.item(),
+                           "label": pos_label.item()}
+
+            curr_record.update({f"trace1_{i}": v for i, v in enumerate(trace1)})
+            curr_record.update({f"trace2_{i}": v for i, v in enumerate(trace2)})
+
+            pos_ppi_scores_list.append(curr_record)
 
 
         
@@ -1094,14 +1122,22 @@ for k, elut in enumerate(elut_list):
         # Get confidence score of similarity based on Euclidean distance
         confidence = euclidean_to_confidence(euclidean_dist, MAX_ED, SENSITIVITY)
         #neg_ppi_conf_output_file.write(str(prot0[0]) + ":" + str(prot1[0]) + f"\t{euclidean_dist.item():.4f}\t{neg_ppi_pearson_list[i]:.4f}\t{confidence.item():.4f}\t{elut_id}\n")
+        trace1 = neg_elut0[0][0].detach().cpu().tolist()
+        trace2 = neg_elut1[0][0].detach().cpu().tolist()
 
-        neg_ppi_scores_list.append({"ID1": str(prot0[0]),
-                                    "ID2": str(prot1[0]),
-                                    "Experiment": elut_id.item(),
-                                    "Euclidean": euclidean_dist.item(),
-                                    "Pearson": pearson_corr,
-                                    "Confidence": confidence.item(),
-                                    "Label": neg_label.item()})
+        curr_record = {"id1": str(prot0[0]),
+                       "id2": str(prot1[0]),
+                       "experiment": elut_id.item(),
+                       "euclidean": euclidean_dist.item(),
+                       "pearson": pearson_corr,
+                       "confidence": confidence.item(),
+                       "label": neg_label.item()}
+
+        curr_record.update({f"trace1_{i}": v for i, v in enumerate(trace1)})
+        curr_record.update({f"trace2_{i}": v for i, v in enumerate(trace2)})
+
+        neg_ppi_scores_list.append(curr_record)
+
 
 
         if i % 5 == 0:
@@ -1111,11 +1147,11 @@ for k, elut in enumerate(elut_list):
 
     # Plot the PDF of the euclidean distance between positive and negative protein pairs
     x = np.linspace(-5,5,1000)
-    mean_pos = np.mean(pos_scores_df['Euclidean'].tolist())
-    mean_neg = np.mean(neg_scores_df['Euclidean'].tolist())
+    mean_pos = np.mean(pos_scores_df['euclidean'].tolist())
+    mean_neg = np.mean(neg_scores_df['euclidean'].tolist())
     diff_means_pos_neg_pdf = abs(mean_neg - mean_pos)
-    y = norm.pdf(x, loc=mean_neg, scale=np.std(neg_scores_df['Euclidean'].tolist()))
-    y2 = norm.pdf(x, loc=mean_pos, scale=np.std(pos_scores_df['Euclidean'].tolist()))
+    y = norm.pdf(x, loc=mean_neg, scale=np.std(neg_scores_df['euclidean'].tolist()))
+    y2 = norm.pdf(x, loc=mean_pos, scale=np.std(pos_scores_df['euclidean'].tolist()))
 
     pylab.plot(x,y,label="negative_pairs")
     pylab.plot(x,y2,label="positive_pairs")
@@ -1128,9 +1164,9 @@ for k, elut in enumerate(elut_list):
     pylab.cla()
 
 
-    sns.histplot(neg_scores_df['Euclidean'].tolist(), alpha=0.5,
+    sns.histplot(neg_scores_df['euclidean'].tolist(), alpha=0.5,
                  label='negative pairs')
-    sns.histplot(pos_scores_df['Euclidean'].tolist(), alpha=0.5, bins=25,
+    sns.histplot(pos_scores_df['euclidean'].tolist(), alpha=0.5, bins=25,
                  label='positive pairs', color='orange')
     plt.title("Euclidean distance counts")
     plt.legend()
@@ -1141,8 +1177,8 @@ for k, elut in enumerate(elut_list):
 
     # Plot the PDFs of the Pearson scores
     x = np.linspace(-2, 2, 1000)
-    y = norm.pdf(x, loc=np.mean(neg_scores_df['Pearson'].tolist()), scale=np.std(neg_scores_df['Pearson'].tolist()))
-    y2 = norm.pdf(x, loc=np.mean(pos_scores_df['Pearson'].tolist()), scale=np.std(neg_scores_df['Pearson'].tolist()))
+    y = norm.pdf(x, loc=np.mean(neg_scores_df['pearson'].tolist()), scale=np.std(neg_scores_df['pearson'].tolist()))
+    y2 = norm.pdf(x, loc=np.mean(pos_scores_df['pearson'].tolist()), scale=np.std(neg_scores_df['pearson'].tolist()))
     plt.plot(x,y,label="pearson_negative_pairs")
     plt.plot(x,y2,label="pearson_positive_pairs")
     plt.title("PDFs of Pearson scores")
@@ -1153,9 +1189,9 @@ for k, elut in enumerate(elut_list):
     plt.cla()
 
     # Plot the counts of positive/negative Pearson scores
-    sns.histplot(neg_scores_df['Pearson'].tolist(), alpha=0.5,
+    sns.histplot(neg_scores_df['pearson'].tolist(), alpha=0.5,
                  label='negative pairs')
-    sns.histplot(pos_scores_df['Pearson'].tolist(), alpha=0.5, bins=50,
+    sns.histplot(pos_scores_df['pearson'].tolist(), alpha=0.5, bins=50,
                  label='positive pairs', color='orange')
     plt.title(f"Pearson score counts")
     plt.legend()
@@ -1172,8 +1208,8 @@ for k, elut in enumerate(elut_list):
 
     # Plot the pearson scores for positive PPIs against the euclidean score
     #   Euclidean distance should be small, preferably as close to 0 as possible
-    scat1 = sns.scatterplot(data=scores_df, x="Euclidean", y="Pearson",
-                            hue="Label", s=10)
+    scat1 = sns.scatterplot(data=scores_df, x="euclidean", y="pearson",
+                            hue="label", s=10)
     scat1.set_xlim(-1, 12)
     fig_scat1 = scat1.get_figure()
     fig_scat1.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_pos_scatter_{elut_data_filename}.png")
@@ -1181,18 +1217,18 @@ for k, elut in enumerate(elut_list):
 
     # Plot a contour graph of the positive PPIs
     #   We want to make the glob near (0, 0) larger
-    kde1 = sns.kdeplot(data=scores_df, x='Euclidean', y='Pearson',
-                       common_norm=False, hue='Label', levels=15)
+    kde1 = sns.kdeplot(data=scores_df, x='euclidean', y='pearson',
+                       common_norm=False, hue='label', levels=15)
     kde1.set_xlim(-1, 12)
     fig_kde1 = kde1.get_figure()
     fig_kde1.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_contour_{elut_data_filename}.png")
     fig_kde1.clf()
 
     # Get labels, confidences, Euclidean distances, Pearson coefficients of test points
-    y_labels = pos_scores_df['Label'].tolist() + neg_scores_df['Label'].tolist()
-    y_confs = pos_scores_df['Confidence'].tolist() + neg_scores_df['Confidence'].tolist()
-    y_dists = pos_scores_df['Euclidean'].tolist() + neg_scores_df['Euclidean'].tolist()
-    y_pearson = pos_scores_df['Pearson'].tolist() + neg_scores_df['Pearson'].tolist()
+    y_labels = pos_scores_df['label'].tolist() + neg_scores_df['label'].tolist()
+    y_confs = pos_scores_df['confidence'].tolist() + neg_scores_df['confidence'].tolist()
+    y_dists = pos_scores_df['euclidean'].tolist() + neg_scores_df['euclidean'].tolist()
+    y_pearson = pos_scores_df['pearson'].tolist() + neg_scores_df['pearson'].tolist()
 
 
     # Invert y_labels series s.t. '1' is positive and '0' is negative

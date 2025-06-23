@@ -2,6 +2,7 @@
 *.pt
 *.log
 *.txt
+*.csv
 data/elut/Anna_HEK_urea_SEC_0M_050817_20220314b_trimmed.elut
 data/elut/Anna_HEK_urea_SEC_0p5M_052317_20220315_reviewed_trimmed.elut
 data/elut/HEK293_EDTA_minus_SEC_control_20220626.elut
