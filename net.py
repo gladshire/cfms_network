@@ -67,7 +67,7 @@ import sys
 import os
 
 # Use random subset samples for speeding up run on test sets during debugging
-__FAST_TEST__ = True
+__FAST_TEST__ = False
 PARAMETER_FILENAME = "cfms_ppi_network_bdlstm_adam_1e-4_256.pt"
 FIGURES_DIRECTORY = f"{PARAMETER_FILENAME.split(".")[0]}_figs"
 if not os.path.exists(FIGURES_DIRECTORY):
@@ -156,15 +156,6 @@ elut_data = [DATADIR_ELUT + "HEK293_EDTA_minus_SEC_control_20220626.elut",
              DATADIR_ELUT + "Anna_HEK_urea_SEC_0M_050817_20220314b_trimmed.elut",
              DATADIR_ELUT + "Anna_HEK_urea_SEC_0p5M_052317_20220315_reviewed_trimmed.elut",
              DATADIR_ELUT + "Hs_helaN_1010_ACC.prot_count_mFDRpsm001.elut",
-             DATADIR_ELUT + "Hs_HCW_1.elut",
-             DATADIR_ELUT + "Hs_HCW_2.elut",
-             DATADIR_ELUT + "Hs_HCW_3.elut",
-             DATADIR_ELUT + "Hs_HCW_4.elut",
-             DATADIR_ELUT + "Hs_HCW_5.elut",
-             DATADIR_ELUT + "Hs_HCW_6.elut",
-             DATADIR_ELUT + "Hs_HCW_7.elut",
-             DATADIR_ELUT + "Hs_HCW_8.elut",
-             DATADIR_ELUT + "Hs_HCW_9.elut",
              DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep1.elut",
              DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep2.elut",
              DATADIR_ELUT + "U2OS_cells_SEC_Kirkwood_2013_rep3.elut",
@@ -173,7 +164,11 @@ elut_data = [DATADIR_ELUT + "HEK293_EDTA_minus_SEC_control_20220626.elut",
              DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutaoufik_2019_R1.elut",
              DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutaoufik_2019_R2.elut",
              DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutaoufik_2019_2_R1.elut",
-             DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutaoufik_2019_2_R2.elut"]
+             DATADIR_ELUT + "NTera2_embryonal_carcinoma_stem_cells_SEC_Moutaoufik_2019_2_R2.elut",
+             DATADIR_ELUT + "RBC_TX-100_SEC_Marcotte_2022.elut",
+             DATADIR_ELUT + "RBC_young_ctrlRNaseA_SEC_Marcotte_2022.elut",
+             DATADIR_ELUT + "Hemolysate_old_ctrl_SEC_Marcotte_2022.elut",
+             DATADIR_ELUT + "Hemolysate_SEC_Marcotte_2022.elut"]
 
 # Assemble list of preprocessed, normalized .elut dataframes
 elut_list = []
@@ -775,7 +770,7 @@ for i, (pos_elut0, pos_elut1, pos_label, elut_id) in enumerate(test_pos_dataload
 
     curr_record = {"id1": str(prot0[0]),
                    "id2": str(prot1[0]),
-                   "experiment": elut_id.item(),
+                   "experiment": elut_data[elut_id.item()],
                    "euclidean": euclidean_dist.item(),
                    "pearson": pearson_corr,
                    "confidence": confidence.item(),
@@ -842,7 +837,7 @@ for i, (neg_elut0, neg_elut1, neg_label, elut_id) in enumerate(test_neg_dataload
 
     curr_record = {"id1": str(prot0[0]),
                    "id2": str(prot1[0]),
-                   "experiment": elut_id.item(),
+                   "experiment": elut_data[elut_id.item()],
                    "euclidean": euclidean_dist.item(),
                    "pearson": pearson_corr,
                    "confidence": confidence.item(),
@@ -1064,7 +1059,7 @@ for k, elut in enumerate(elut_list):
 
             curr_record = {"id1": str(prot0[0]),
                            "id2": str(prot1[0]),
-                           "experiment": elut_id.item(),
+                           "experiment": elut_data[elut_id.item()],
                            "euclidean": euclidean_dist.item(),
                            "pearson": pearson_corr,
                            "confidence": confidence.item(),
@@ -1127,7 +1122,7 @@ for k, elut in enumerate(elut_list):
 
         curr_record = {"id1": str(prot0[0]),
                        "id2": str(prot1[0]),
-                       "experiment": elut_id.item(),
+                       "experiment": elut_data[elut_id.item()],
                        "euclidean": euclidean_dist.item(),
                        "pearson": pearson_corr,
                        "confidence": confidence.item(),
