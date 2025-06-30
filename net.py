@@ -68,23 +68,23 @@ import os
 
 # Use random subset samples for speeding up run on test sets during debugging
 __FAST_TEST__ = False
-PARAMETER_FILENAME = "cfms_ppi_network_bdlstm_adam_1e-4_256.pt"
-FIGURES_DIRECTORY = f"{PARAMETER_FILENAME.split(".")[0]}_figs"
-if not os.path.exists(FIGURES_DIRECTORY):
-    os.makedirs(FIGURES_DIRECTORY)
+PARAMETER_FILENAME = "cfms_ppi_network_bdlstm_wprojection_augment052_adam_1e-4_256.pt"
+OUTPUT_DIRECTORY = f"{PARAMETER_FILENAME.split(".")[0]}_out"
+if not os.path.exists(OUTPUT_DIRECTORY):
+    os.makedirs(OUTPUT_DIRECTORY)
 
 # Program parameters
-SEED = 5123
-NUM_THREAD = 4
+DETERMINISTIC = True
+SEED = 5123        # For DETERMINISTIC = True, seeded model behavior
 SUBSET_SIZE = 1000 # For if __FAST_VALID_TEST__ is True
-SAMPLE_RATE = 50   # How many batches between loss samples (for printing to terminal, plotting loss curve)
+SAMPLE_RATE = 5    # How many batches between loss samples (for printing to terminal, plotting loss curve)
 
 # Database directories
 DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
 
 # Training parameters
-NUM_EPOCHS = 50
+NUM_EPOCHS = 21
 BATCH_SIZE = 256
 LEARN_RATE = 1e-4
 MOMENTUM = 0.9
@@ -97,12 +97,28 @@ MARGIN = 1.0      # Minimum Euclidean separation for negative PPIs
 MAX_ED = 3.75     # Euclidean distance threshold for 0% confidence 
 
 # Set up manual seeding for random number generators
-np.random.seed(SEED)
-random.seed(SEED)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed(SEED)
-torch.backends.cudnn.deterministic = True
-torch.use_deterministic_algorithms(True)
+def seed_everything(seed=42, deterministic=True):
+    if not deterministic:
+        print("⚠️ Deterministic seeding is OFF. Training will be nondeterministic.")
+        return
+
+    print(f"✅ Seeding everything with seed {seed} for deterministic behavior.")
+
+    # Seed all pseudorandom environment parameters
+    np.random.seed(SEED)
+    random.seed(SEED)
+    torch.manual_seed(SEED)
+    torch.cuda.manual_seed_all(SEED)
+
+    # Seed pseudorandom hashing 
+    os.environ['PYTHONHASHSEED'] = str(SEED)
+
+    # Ensure deterministic behavior
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True, warn_only=True)
+
+seed_everything(seed=SEED, deterministic=DETERMINISTIC)
 
 
 print("Retrieving data from files ...")
@@ -172,6 +188,7 @@ elut_data = [DATADIR_ELUT + "HEK293_EDTA_minus_SEC_control_20220626.elut",
 
 # Assemble list of preprocessed, normalized .elut dataframes
 elut_list = []
+prot_set = set()
 for elut_file in elut_data:
 
     if not os.path.exists(elut_file):
@@ -179,6 +196,7 @@ for elut_file in elut_data:
         continue
 
     print(f"Parsing '{elut_file}' ...")
+
     elut_df = pd.read_csv(elut_file, sep='\t', index_col=0)
 
     #elut_df = elut_df.set_index('Unnamed: 0')
@@ -270,6 +288,60 @@ def euclidean_to_confidence(euc_dist, max_euc_dist, s):
     return confidence
 
 
+class elutionPairContrastiveDataset(Dataset):
+    def __init__(self, elutdf_list, pos_ppis, transform=False, input_size=128):
+        self.elut_df_list = elutdf_list
+        self.ppis = []
+        self.elut_ids = []
+
+        for elut_id, elut_df in enumerate(self.elut_df_list):
+            elut_df_index = set(elut_df.index)
+            pos_ppis_elut = [pppi for pppi in pos_ppis if len(pppi.intersection(elut_df_index)) == 2]
+            self.ppis += pos_ppis_elut
+            self.elut_ids += [elut_id] * len(pos_ppis_elut)
+
+        self.transform = transform
+        self.input_size = input_size
+
+    def augment(elut, noise_std=0.05, shift_range=3):
+        elut += torch.randn_like(elut) * noise_std
+        shift = random.randint(-shift_range, shift_range)
+        elut = torch.roll(elut, shifts=shift, dims=-1)
+        return elut
+
+
+    def __getitem__(self, index):
+        pair = list(self.ppis[index])
+        elut_id = self.elut_ids[index]
+        elut_df = self.elut_df_list[elut_id]
+
+
+        def load_padded(prot):
+            elut = torch.from_numpy(elut_df.T[prot].values.copy()).float()
+            elut = F.pad(elut, (self.input_size - elut.size(0), 0))
+            return elut.unsqueeze(0)
+
+
+        def augment(elut, noise_std=0.05, shift_range=3):
+            elut += torch.randn_like(elut) * noise_std
+            shift = random.randint(-shift_range, shift_range)
+            elut = torch.roll(elut, shifts=shift, dims=-1)
+            return elut
+
+        prot1, prot2 = pair
+
+        elut1, elut2 = load_padded(prot1), load_padded(prot2)
+
+        pair_view1 = torch.stack([elut1, elut2])
+        pair_view2 = torch.stack([augment(elut1), augment(elut2)])
+
+        return pair_view1, pair_view2, elut_id
+
+    def __len__(self):
+        return len(self.ppis)
+
+
+# NOTE: Used only for explicit, pairwise loss. For InfoNCELoss, use 'elutionPairContrastiveDataset'
 # Wrap elution pair data into PyTorch dataset
 class elutionPairDataset(Dataset):
     def __init__(self, elutdf_list, pos_ppis, neg_ppis, transform=False, input_size=128, filterPearson=False):
@@ -295,7 +367,7 @@ class elutionPairDataset(Dataset):
                 # Remove low-Pearson samples from positive PPIs
                 pos_ppis_elut = [pppi for pppi in pos_ppis_elut if scipy.stats.pearsonr(
                     torch.from_numpy(elut_df.T[list(pppi)[0]].values.copy()).float(),
-                    torch.from_numpy(elut_df.T[list(pppi)[1]].values.copy()).float())[0] >= 0.4]
+                    torch.from_numpy(elut_df.T[list(pppi)[1]].values.copy()).float())[0] >= 0.1]
 
                 # Remove high-Pearson samples from negative PPIs
                 neg_ppis_elut = [nppi for nppi in neg_ppis_elut if scipy.stats.pearsonr(
@@ -321,6 +393,14 @@ class elutionPairDataset(Dataset):
         prot0 = pair[0]
         prot1 = pair[1]
 
+
+        def augment(elut, noise_std=0.05, shift_range=2):
+            elut += torch.randn_like(elut) * noise_std
+            shift = random.randint(-shift_range, shift_range)
+            elut = torch.roll(elut, shifts=shift, dims=-1)
+            return elut
+
+
         elut0 = (prot0, torch.from_numpy(elut_df.T[pair[0]].values.copy()).float())
         elut1 = (prot1, torch.from_numpy(elut_df.T[pair[1]].values.copy()).float())
 
@@ -336,6 +416,11 @@ class elutionPairDataset(Dataset):
 
         elut0 = (elut0[0], elut0[1].unsqueeze(0))
         elut1 = (elut1[0], elut1[1].unsqueeze(0))
+
+        if random.random() < 0.5:
+            elut0 = (elut0[0], augment(elut0[1]))
+        else:
+            elut1 = (elut1[0], augment(elut1[1]))
 
         return elut0, elut1, self.labels[index], elut_id
 
@@ -369,6 +454,22 @@ test_siamese_dataset = elutionPairDataset(elutdf_list=elut_list,
 
 subset_indices = torch.randperm(len(test_siamese_dataset))[:SUBSET_SIZE]
 subset_test_siamese_dataset = Subset(test_siamese_dataset, subset_indices)
+'''
+train_siamese_dataset = elutionPairContrastiveDataset(elutdf_list=elut_list,
+                                                      pos_ppis=train_pos_ppis,
+                                                      transform=True)
+
+valid_siamese_dataset = elutionPairContrastiveDataset(elutdf_list=elut_list,
+                                                      pos_ppis=valid_pos_ppis,
+                                                      transform=True)
+
+test_siamese_dataset = elutionPairContrastiveDataset(elutdf_list=elut_list,
+                                                     pos_ppis=test_pos_ppis,
+                                                     transform=True)
+
+subset_indices = torch.randperm(len(test_siamese_dataset))[:SUBSET_SIZE]
+subset_test_siamese_dataset = Subset(test_siamese_dataset, subset_indices)
+'''
 
 
 class PositionalEncoding(nn.Module):
@@ -394,62 +495,61 @@ class siameseNet(nn.Module):
         # Input: (B, 1, 128)
         self.pos_encoder = PositionalEncoding(d_model=hidden_size)
 
-        # Transformer layers
-        #   - Overfits easily, probably too complex
-        self.tns = nn.TransformerEncoder(
-                nn.TransformerEncoderLayer(d_model=hidden_size,
-                                           nhead=1, dim_feedforward=32,
-                                           batch_first=True),
-                num_layers=1
-        )
-
-        self.rnn = nn.RNN(input_size=1,
-                          hidden_size=hidden_size,
-                          num_layers=rnn_layers,
-                          batch_first=True)
-
         self.LSTM = nn.LSTM(input_size=1,
                             hidden_size=hidden_size,
                             num_layers=lstm_layers,
                             bidirectional=True,
                             batch_first=True)
         
-        self.input_projection = nn.Linear(1, projection_size)
-
         self.pooling = nn.AdaptiveAvgPool1d(1)
 
-        self.fc1 = nn.Sequential(
+        self.projector = nn.Sequential(
 
-                nn.Linear(29, 16),
-                nn.ReLU(inplace=True),
-
-                nn.Linear(16, 8),
-                nn.ReLU(inplace=True),
+                nn.Linear(hidden_size * 2, hidden_size),
+                nn.ReLU(),
+                nn.Linear(hidden_size, projection_size)
 
         )
+
+        self.cnn1 = nn.Sequential(
+                nn.Conv1d(in_channels=1, out_channels=4,
+                          kernel_size=3, stride=1, padding=1),
+                nn.BatchNorm1d(4),
+                nn.ELU(inplace=True),
+
+                nn.Conv1d(in_channels=4, out_channels=16,
+                          kernel_size=3, stride=1, padding=1),
+                nn.BatchNorm1d(16),
+                nn.ELU(inplace=True),
+
+        )
+
+
+        self.cnn2 = nn.Sequential(
+                nn.ConvTranspose1d(in_channels=16, out_channels=1,
+                                   kernel_size=1, stride=1, padding=1),
+
+        )
+
+
 
 
     # Function called on both images, x, to determine their similarity
     def forward_once(self, x):
         # x shape: [batch, 1, 128] -> [batch, 128, 1]
+
+        # LSTM ARCHITECTURE PLACEHOLDER
         x = x.permute(0, 2, 1)
-
-        # Apply input projection
-        #x = self.input_projection(x)
-
-        # Apply positional encoding
-        #x = self.pos_encoder(x)
-
-        # Apply transformer/rnn layer
-        #x = self.tns(x)
-        #x, _ = self.rnn(x)
         x, _ = self.LSTM(x)
-
-        # Reshape
         x = x.permute(0, 2, 1) # [batch, features, seq_len]
         x = self.pooling(x).squeeze(-1) # [batch, features]
+        x = self.projector(x)
 
-        #x, _ = x.max(dim=1)
+        # CONVOLUTIONAL ARCHITECTURE PLACEHOLDER
+        #x = self.cnn1(x)
+        #x = self.cnn2(x)
+        #x = x.reshape(x.size()[0], -1)
+
         return x
 
     # Main forward function
@@ -461,63 +561,102 @@ class siameseNet(nn.Module):
 
 # Define contrastive loss function, using Euclidean distance
 class contrastiveLossEuclidean(torch.nn.Module):
-    def __init__(self, margin=1.0):
+    def __init__(self, initial_margin=1.0, learnable_margin=False):
         super(contrastiveLossEuclidean, self).__init__()
-        self.margin = margin
+        if learnable_margin:
+            self.initial_margin = torch.nn.Parameter(torch.tensor(initial_margin))
+        else:
+            self.initial_margin = initial_margin
+        self.learnable_margin = learnable_margin
 
     # Contrastive loss calculation
     def forward(self, output1, output2, label):
+
+        output1 = F.normalize(output1, dim=1)
+        output2 = F.normalize(output2, dim=1)
+
         euclidean_dist = F.pairwise_distance(output1, output2, keepdim=True)
-        loss = torch.mean((1-label) * torch.pow(euclidean_dist, 2) +
-                          (label) * torch.pow(torch.clamp(self.margin - euclidean_dist, min=0.0), 2))
+        #margin_clamped = torch.clamp(self.initial_margin, min=0.0)
+
+        loss = torch.mean(
+                (1-label) * torch.pow(euclidean_dist, 2) +
+                (label) * torch.pow(torch.clamp(self.initial_margin - euclidean_dist, min=0.0), 2))
         return loss
 
-# Define SimCLR contrastive loss, based on cosine distance
-class contrastiveLossCosineDistance(nn.Module):
-    def __init__(self, margin=1.0, tau=1.0):
-        super(contrastiveLossCosineDistance, self).__init__()
-        self.margin = margin
-        self.tau = tau
+class infoNCELoss(nn.Module):
+    def __init__(self, temperature=0.07):
+        super(infoNCELoss, self).__init__()
+        self.temperature = temperature
 
-    def forward(self, output1, output2, label):
-        cos_sim = F.cosine_similarity(output1, output2)
 
-        cos_dist = 1.0 - cos_sim
-        cos_dist_t = cos_dist / self.tau
+    def forward(self, output1, output2, label=None):
 
-        loss = torch.mean((1-label) * torch.pow(cos_dist_t, 2) +
-                          (label) * torch.pow(torch.clamp(self.margin - cos_dist_t, min=0.0), 2))
+        # Normalize outputs prior to contrastive loss calculation
+        output1 = F.normalize(output1, dim=1)
+        output2 = F.normalize(output2, dim=1)
+
+        batch_size = output1.shape[0]
+
+        # Concatenate: [2*batch_size, projection_dim]
+        output = torch.cat([output1, output2], dim=0)
+
+        # Compute cosine similarity matrix [2B, 2B]
+        sim = torch.matmul(output, output.T) / self.temperature
+
+        # Remove self-similarity
+        mask = torch.eye(2 * batch_size, dtype=torch.bool, device=output.device)
+        sim = sim.masked_fill(mask, float('-inf'))
+
+        # Positive pairs are offset by batch_size. Maps each index to its corresponding PPPI
+        # in opposite view
+        pos_indices = ((torch.arange(2 * batch_size) + batch_size) % (2 * batch_size))
+        pos_indices = pos_indices.to(sim.device)
+
+        # Compute contrastive loss
+        loss = F.cross_entropy(sim, pos_indices)
+
         return loss
-
 
 print("Network defined. Wrapping elution datasets in DataLoaders ...")
 
+# Seed dataloaders for pseudorandom training
+generator = torch.Generator()
+if DETERMINISTIC:
+    generator.manual_seed(SEED)
 
 # Load training dataset
 train_dataloader = DataLoader(train_siamese_dataset,
                               shuffle=True,
                               drop_last=True,
-                              num_workers=2,
+                              num_workers=0 if DETERMINISTIC else 2,
+                              worker_init_fn=lambda worker_id: np.random.seed(seed + worker_id) if DETERMINISTIC else None,
+                              generator=generator if DETERMINISTIC else None,
                               batch_size=BATCH_SIZE)
 
 # Load validation and test datasets
 valid_dataloader = DataLoader(valid_siamese_dataset,
                               shuffle=True,
                               drop_last=True,
-                              num_workers=2,
+                              num_workers=0 if DETERMINISTIC else 2,
+                              worker_init_fn=lambda worker_id: np.random_seed(seed + worker_id) if DETERMINISTIC else None,
+                              generator=generator if DETERMINISTIC else None,
                               batch_size=BATCH_SIZE)
 
 if __FAST_TEST__:
     test_dataloader = DataLoader(subset_test_siamese_dataset,
                                  shuffle=True,
                                  drop_last=True,
-                                 num_workers=2,
+                                 num_workers=0 if DETERMINISTIC else 2,
+                                 worker_init_fn=lambda worker_id: np.random_seed(seed + worker_id) if DETERMINISTIC else None,
+                                 generator=generator if DETERMINISTIC else None,
                                  batch_size=BATCH_SIZE)
 else:
     test_dataloader = DataLoader(test_siamese_dataset,
                                  shuffle=True,
                                  drop_last=True,
-                                 num_workers=2,
+                                 num_workers=0 if DETERMINISTIC else 2,
+                                 worker_init_fn=lambda worker_id: np.random_seed(seed + worker_id) if DETERMINISTIC else None,
+                                 generator=generator if DETERMINISTIC else None,
                                  batch_size=BATCH_SIZE)
 
 # Instantiate network
@@ -533,10 +672,9 @@ if len(sys.argv) != 1:
 
 
 # Choose loss function to use
-criterion = contrastiveLossEuclidean(margin=MARGIN)
-#criterion = contrastiveLossCosineDistance(tau=TEMPERATURE)
-#criterion = nn.CosineEmbeddingLoss(margin=0.8, reduction='sum')
-
+criterion = contrastiveLossEuclidean(initial_margin=MARGIN)
+#criterion = contrastiveLossCosineDistance
+#criterion = infoNCELoss()
 
 # Choose optimizer algorithm
 optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
@@ -567,10 +705,10 @@ min_avg_test_loss = 1e9
 
 
 def weights_init(m):
-    if isinstance(m, nn.Conv1d):
+    if isinstance(m, nn.Linear):
         torch.nn.init.xavier_uniform_(m.weight.data)                 
 
-#net.apply(weights_init)
+net.apply(weights_init)
 
 
 # Training loop
@@ -595,18 +733,18 @@ if trainNet:
         nb_train = len(train_dataloader)
         nb_valid = len(valid_dataloader)
 
-        #print(f"Train: {nb_train}")
-        #print(f"Valid: {nb_valid}")
-
         valid_dataloader_iter = iter(valid_dataloader)
 
         for i, (elut0_train, elut1_train, label_train, elut_id_train) in enumerate(train_dataloader, 0):
+        #for i, (elut0_train, elut1_train, elut_id_train) in enumerate(train_dataloader, 0):
 
             try:
                 (elut0_valid, elut1_valid, label_valid, elut_id_valid) = next(valid_dataloader_iter)
+                #(elut0_valid, elut1_valid, elut_id_valid) = next(valid_dataloader_iter)
             except StopIteration:
                 valid_dataloader_iter = iter(valid_dataloader)
                 (elut0_valid, elut1_valid, label_valid, elut_id_valid) = next(valid_dataloader_iter)
+                #(elut0_valid, elut1_valid, elut_id_valid) = next(valid_dataloader_iter)
 
             pccs_train = []
             pccs_valid = []
@@ -625,6 +763,8 @@ if trainNet:
             # Send elution data, labels to CUDA
             elut0_train, elut1_train, label_train = elut0_train[1].cuda(), elut1_train[1].cuda(), label_train.cuda()
             elut0_valid, elut1_valid, label_valid = elut0_valid[1].cuda(), elut1_valid[1].cuda(), label_valid.cuda()
+            #elut0_train, elut1_train = elut0_train[1].cuda(), elut1_train[1].cuda()
+            #elut0_valid, elut1_valid = elut0_valid[1].cuda(), elut1_valid[1].cuda()
 
             # Zero the gradients
             optimizer.zero_grad()
@@ -639,6 +779,8 @@ if trainNet:
             # Pass outputs, label to the contrastive loss function
             train_loss_contrastive = criterion(output1_train, output2_train, label_train)
             valid_loss_contrastive = criterion(output1_valid, output2_valid, label_valid)
+            #train_loss_contrastive = criterion(output1_train, output2_train)
+            #valid_loss_contrastive = criterion(output1_train, output2_train)
 
             # Perform backpropagation
             train_loss_contrastive.backward()
@@ -652,8 +794,8 @@ if trainNet:
             # Update training loss series for plotting
             if i % SAMPLE_RATE == 0:
                 print(f"  Batch [{i} / {num_batches}]")
-                print(f"      Training Loss: {train_loss_contrastive.item():.4f}")
-                print(f"    Validation Loss: {valid_loss_contrastive.item():.4f}")
+                print(f"      Training Loss: {train_loss_contrastive.item()}")
+                print(f"    Validation Loss: {valid_loss_contrastive.item()}")
                 iteration_num += SAMPLE_RATE
 
                 counter.append(iteration_num)
@@ -662,28 +804,27 @@ if trainNet:
   
         # Produce training loss curve figure PNG
         plot_loss(counter, [train_loss_hist, valid_loss_hist], ["Training loss", "Validation Loss"], title="Contrastive Loss",
-                  xaxis="Batches", filename=f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_train_{epoch+1}.png")
+                  xaxis="Batches", filename=f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_train_{epoch+1}.png")
 
         # Test model on test set
         net.eval()
         with torch.no_grad():
             test_loss = 0.0
             for test_i, (test_elut0, test_elut1, test_label, test_elut_id) in enumerate(test_dataloader, 0):
+            #for test_i, (test_elut0, test_elut1, test_elut_id) in enumerate(test_dataloader, 0):
                 # Obtain protein IDs
                 test_prot0, test_prot1 = test_elut0[0], test_elut1[0]
-                #for test_ppi0, test_ppi1 in zip(test_elut0[1], test_elut1[1]):
-                #    pccListTest.append(scipy.stats.pearsonr(test_ppi0[0], test_ppi1[0])[0])
-
-                #pcc = torch.tensor(pccListTest, dtype=torch.float32).cuda()
 
                 # Send test elution data, labels to CUDA
-                test_elut0, test_elut1, test_label = test_elut0[1].cuda(), test_elut1[1].cuda(), test_label.cuda()
+                test_elut0, test_elut1, test_label = test_elut0[1].cuda(), test_elut1[1].cuda(), test_label.cuda() # For elutionPairContrastiveDatset
+                #test_elut0, test_elut1 = test_elut0[1].cuda(), test_elut1[1].cuda() # For elutionPairDataset
 
                 # Padd two elution traces into network and obtain two outputs
                 test_output1, test_output2 = net(test_elut0, test_elut1)
 
                 # Pass outputs, label to the contrastive loss function
                 loss_test_contrastive = criterion(test_output1, test_output2, test_label)
+                #loss_test_contrastive = criterion(test_output1, test_output2)
 
                 # Add to total test loss
                 test_loss += loss_test_contrastive.item()
@@ -712,7 +853,7 @@ if trainNet:
             plot_loss(epoch_hist, [avg_test_loss_hist],
                       ["Testing loss"],
                       title="Average Contrastive Loss", xaxis="Epochs",
-                      filename=f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_epoch_{epoch+1}.png")
+                      filename=f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_epoch_{epoch+1}.png")
 
         # Early stopping according to user-defined threshold
         if avg_test_loss < EARLY_THRESHOLD:
@@ -869,7 +1010,7 @@ pylab.annotate(f"{mean_pos}", (0.0, mean_pos))
 pylab.title("PDFs of Euclidean distances after model transform")
 pylab.legend()
 pylab.grid()
-pylab.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_EUCLIDEAN.png")
+pylab.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_EUCLIDEAN.png")
 pylab.clf()
 pylab.cla()
 
@@ -881,7 +1022,7 @@ sns.histplot(pos_scores_df[['euclidean']].values, alpha=0.5, bins=25,
 plt.title("Euclidean distance counts")
 plt.legend()
 plt.grid()
-plt.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_fig_hist_EUCLIDEAN.png")
+plt.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_fig_hist_EUCLIDEAN.png")
 pylab.clf()
 pylab.cla()
 
@@ -895,7 +1036,7 @@ plt.plot(x,y2,label="pearson_positive_pairs")
 plt.title("PDFs of Pearson scores")
 plt.legend()
 plt.grid()
-plt.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_PEARSON.png")
+plt.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_PEARSON.png")
 plt.clf()
 plt.cla()
 
@@ -907,7 +1048,7 @@ sns.histplot(pos_scores_df[['pearson']].values, alpha=0.5, bins=50,
 plt.title("Pearson score counts")
 plt.legend()
 plt.grid()
-plt.savefig(f"{PARAMETER_FILENAME.split(".")[0]}_fig_hist_PEARSON.png")
+plt.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_fig_hist_PEARSON.png")
 pylab.clf()
 pylab.cla()
 
@@ -921,7 +1062,7 @@ scat1 = sns.scatterplot(data=scores_df, x="euclidean", y="pearson",
                         hue="label", s=10)
 scat1.set_xlim(-1, 12)
 fig_scat1 = scat1.get_figure()
-fig_scat1.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_scatter.png")
+fig_scat1.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_scatter.png")
 fig_scat1.clf()
 
 # Plot a contour graph of the positive PPIs
@@ -930,7 +1071,7 @@ kde1 = sns.kdeplot(data=scores_df, x="euclidean", y="pearson",
                    common_norm=False, hue="label", levels=15)
 kde1.set_xlim(-1, 12)
 fig_kde1 = kde1.get_figure()
-fig_kde1.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_kde.png")
+fig_kde1.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_kde.png")
 fig_kde1.clf()
 
 # Get labels, confidences, Euclidean distances, Pearson coefficients of test points
@@ -988,7 +1129,7 @@ plt.title("PR Curve")
 plt.xlabel("Recall")
 plt.ylabel("Precision")
 plt.legend(["Euclidean PR", "Pearson PR"])
-plt.savefig(f"{FIGURES_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pr_curve.png")
+plt.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pr_curve.png")
 plt.clf()
 plt.cla()
 
@@ -996,7 +1137,7 @@ plt.cla()
 aupr_euclidean = get_aupr(precision_euclidean, recall_euclidean)
 aupr_pearson = get_aupr(precision_pearson, recall_pearson)
 # Print metrics to txt file
-with open(f"{PARAMETER_FILENAME.split(".")[0]}_results-final.log", 'w') as outFile:
+with open(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_results-final.log", 'w') as outFile:
     outFile.write(f"Minimum Average Validation Loss: {min_avg_valid_loss:.4f}\n")
     outFile.write(f"Minimum Average Test Loss: {min_avg_test_loss:.4f}\n")
     outFile.write(f"Difference Between ED Means of Pos/Neg PPIs: {diff_means_pos_neg_pdf:.4f}\n")
@@ -1007,7 +1148,7 @@ for k, elut in enumerate(elut_list):
 
     elut_data_filename = elut_data[k].split("/")[-1]
     elut_data_filebase = elut_data_filename.split(".")[0]
-    curr_figs_directory = f"{FIGURES_DIRECTORY}/{elut_data_filebase}"
+    curr_figs_directory = f"{OUTPUT_DIRECTORY}/{elut_data_filebase}"
 
     if not os.path.exists(curr_figs_directory):
         os.makedirs(curr_figs_directory)
@@ -1283,7 +1424,7 @@ for k, elut in enumerate(elut_list):
     aupr_euclidean = get_aupr(precision_euclidean, recall_euclidean)
     aupr_pearson = get_aupr(precision_pearson, recall_pearson)
     # Print metrics to txt file
-    with open(f"results-final_{k+1}.log", 'w') as outFile:
+    with open(f"{curr_figs_directory}/results-final_{elut_data_filename}.log", 'w') as outFile:
         outFile.write(f"Minimum Average Validation Loss: {min_avg_valid_loss:.4f}\n")
         outFile.write(f"Minimum Average Test Loss: {min_avg_test_loss:.4f}\n")
         outFile.write(f"Difference Between ED Means of Pos/Neg PPIs: {diff_means_pos_neg_pdf:.4f}\n")
