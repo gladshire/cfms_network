@@ -84,7 +84,7 @@ DATADIR_ELUT = "data/elut/"
 DATADIR_PPIS = "data/ppi/"
 
 # Training parameters
-NUM_EPOCHS = 21
+NUM_EPOCHS = 50
 BATCH_SIZE = 256
 LEARN_RATE = 1e-4
 MOMENTUM = 0.9
@@ -344,7 +344,7 @@ class elutionPairContrastiveDataset(Dataset):
 # NOTE: Used only for explicit, pairwise loss. For InfoNCELoss, use 'elutionPairContrastiveDataset'
 # Wrap elution pair data into PyTorch dataset
 class elutionPairDataset(Dataset):
-    def __init__(self, elutdf_list, pos_ppis, neg_ppis, transform=False, input_size=128, filterPearson=False):
+    def __init__(self, elutdf_list, pos_ppis, neg_ppis, transform=False, augment=True, input_size=128, filterPearson=False):
         self.elut_df_list = elutdf_list
         self.ppis = []
         self.labels = []
@@ -417,10 +417,11 @@ class elutionPairDataset(Dataset):
         elut0 = (elut0[0], elut0[1].unsqueeze(0))
         elut1 = (elut1[0], elut1[1].unsqueeze(0))
 
-        if random.random() < 0.5:
-            elut0 = (elut0[0], augment(elut0[1]))
-        else:
-            elut1 = (elut1[0], augment(elut1[1]))
+        if self.augment:
+            if random.random() < 0.5:
+                elut0 = (elut0[0], augment(elut0[1]))
+            else:
+                elut1 = (elut1[0], augment(elut1[1]))
 
         return elut0, elut1, self.labels[index], elut_id
 
@@ -443,14 +444,16 @@ print("Assembling validation set ...")
 valid_siamese_dataset = elutionPairDataset(elutdf_list=elut_list,
                                            pos_ppis = valid_pos_ppis,
                                            neg_ppis = valid_neg_ppis,
-                                           transform=True)
+                                           transform=True,
+                                           augment=False)
 
 # Instantiate the test dataset for the model
 print("Assembling test set ...")
 test_siamese_dataset = elutionPairDataset(elutdf_list=elut_list,
                                           pos_ppis = test_pos_ppis,
                                           neg_ppis = test_neg_ppis,
-                                          transform=True)
+                                          transform=True,
+                                          augment=False)
 
 subset_indices = torch.randperm(len(test_siamese_dataset))[:SUBSET_SIZE]
 subset_test_siamese_dataset = Subset(test_siamese_dataset, subset_indices)
