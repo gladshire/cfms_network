@@ -349,6 +349,7 @@ class elutionPairDataset(Dataset):
         self.ppis = []
         self.labels = []
         self.ppis_elut_ids = []
+        self.augment = augment
 
         numPos = 0
         numNeg = 0
@@ -680,8 +681,8 @@ criterion = contrastiveLossEuclidean(initial_margin=MARGIN)
 #criterion = infoNCELoss()
 
 # Choose optimizer algorithm
-optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
-#optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
+#optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
+optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
 
 # Choose learning rate scheduler
 # miles: ReduceLROnPlateau works great dynamically, StepLR good for exploring ruggedness
