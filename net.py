@@ -68,8 +68,9 @@ import os
 
 # Use random subset samples for speeding up run on test sets during debugging
 __FAST_TEST__ = False
-PARAMETER_FILENAME = "cfms_ppi_network_bdlstm_wprojection_augment052_adam_1e-4_256.pt"
-OUTPUT_DIRECTORY = f"{PARAMETER_FILENAME.split(".")[0]}_out"
+PARAMETER_FILEBASE = "cfms_ppi_network_bdlstm_wprojection_augment052025_adam_1e-4_256"
+OUTPUT_DIRECTORY = f"{PARAMETER_FILEBASE}_out"
+PARAMETER_FILENAME = f"{OUTPUT_DIRECTORY}/{PARAMETER_FILEBASE}.pt"
 if not os.path.exists(OUTPUT_DIRECTORY):
     os.makedirs(OUTPUT_DIRECTORY)
 
@@ -89,6 +90,11 @@ BATCH_SIZE = 256
 LEARN_RATE = 1e-4
 MOMENTUM = 0.9
 EARLY_THRESHOLD = 0.01 # Loss value below which early stopping will occur
+
+# Data augmentation parameters
+AUGMENT_RATE = 0.25
+FRACTION_SHIFT = 2
+NOISE_STD = 0.05
 
 # Loss function parameters
 TEMPERATURE = 1.0 # For cosine distance contrastive loss
@@ -303,7 +309,7 @@ class elutionPairContrastiveDataset(Dataset):
         self.transform = transform
         self.input_size = input_size
 
-    def augment(elut, noise_std=0.05, shift_range=3):
+    def augment(elut, noise_std=NOISE_STD, shift_range=FRACTION_SHIFT):
         elut += torch.randn_like(elut) * noise_std
         shift = random.randint(-shift_range, shift_range)
         elut = torch.roll(elut, shifts=shift, dims=-1)
@@ -340,11 +346,41 @@ class elutionPairContrastiveDataset(Dataset):
     def __len__(self):
         return len(self.ppis)
 
+# Sample random integer from discretized normal distribution
+# For fractionation shift augmentation
+def sample_discrete_normal_shift(shift_range, std=1.0):
+    possible_shifts = np.arange(-shift_range, shift_range + 1)
+    probs = np.exp(-0.5 * (possible_shifts / std)**2)
+    probs /= probs.sum()
+    return int(np.random.choice(possible_shifts, p=probs))
+
+# Apply a non-circular shift to an elution series vector
+def non_circular_shift(elut, shift_range=FRACTION_SHIFT, std=1.0, fill_value=0.0):
+    shift = sample_discrete_normal_shift(shift_range, std)
+    if shift == 0:
+        return elut
+
+    elut_len = elut.shape[-1]
+    if shift > 0:
+        # Shift right
+        pad = torch.full_like(elut[..., :shift], fill_value)
+        elut = torch.cat([pad, elut[..., :-shift]], dim=-1)
+    else:
+        # Shift left
+        pad = torch.full_like(elut[..., shift:], fill_value)
+        elut = torch.cat([elut[..., -shift:], pad], dim=-1)
+    return elut
+
+# Apply augmentation to an elution series vector
+def augment(elut, noise_std=NOISE_STD, shift_range=FRACTION_SHIFT, shift_std=1.0):
+    elut += torch.randn_like(elut) * noise_std
+    elut = non_circular_shift(elut, shift_range=shift_range, fill_value=0.0)
+    return elut
 
 # NOTE: Used only for explicit, pairwise loss. For InfoNCELoss, use 'elutionPairContrastiveDataset'
 # Wrap elution pair data into PyTorch dataset
 class elutionPairDataset(Dataset):
-    def __init__(self, elutdf_list, pos_ppis, neg_ppis, transform=False, augment=True, input_size=128, filterPearson=False):
+    def __init__(self, elutdf_list, pos_ppis, neg_ppis, transform=True, augment=True, input_size=128, filterPearson=False):
         self.elut_df_list = elutdf_list
         self.ppis = []
         self.labels = []
@@ -394,13 +430,28 @@ class elutionPairDataset(Dataset):
         prot0 = pair[0]
         prot1 = pair[1]
 
+        '''
+        def non_circular_shift(elut, shift_range=2, fill_value=0.0):
+            shift = random.randint(-shift_range, shift_range)
+            if shift == 0:
+                return elut
+
+            elut_len = elut.shape[-1]
+            if shift > 0:
+                # Shift right
+                pad = torch.full_like(elut[..., :shift], fill_value)
+                elut = torch.cat([pad, elut[..., :-shift]], dim=-1)
+            else:
+                # Shift left
+                pad = torch.full_liks(elut[..., shift:], fill_value)
+                elut = torch.cat([elut[..., -shift:], pad], dim=-1)
+            return elut
 
         def augment(elut, noise_std=0.05, shift_range=2):
             elut += torch.randn_like(elut) * noise_std
-            shift = random.randint(-shift_range, shift_range)
-            elut = torch.roll(elut, shifts=shift, dims=-1)
+            elut = non_circular_shift(elut, shift_range=shift_range, fill_value=0.0)
             return elut
-
+        '''
 
         elut0 = (prot0, torch.from_numpy(elut_df.T[pair[0]].values.copy()).float())
         elut1 = (prot1, torch.from_numpy(elut_df.T[pair[1]].values.copy()).float())
@@ -419,10 +470,14 @@ class elutionPairDataset(Dataset):
         elut1 = (elut1[0], elut1[1].unsqueeze(0))
 
         if self.augment:
-            if random.random() < 0.5:
-                elut0 = (elut0[0], augment(elut0[1]))
+            r = random.random()
+            if r < AUGMENT_RATE:
+                if random.random() < 0.5:
+                    elut0 = (elut0[0], augment(elut0[1]))
+                else:
+                    elut1 = (elut1[0], augment(elut1[1]))
             else:
-                elut1 = (elut1[0], augment(elut1[1]))
+                pass
 
         return elut0, elut1, self.labels[index], elut_id
 
@@ -681,14 +736,15 @@ criterion = contrastiveLossEuclidean(initial_margin=MARGIN)
 #criterion = infoNCELoss()
 
 # Choose optimizer algorithm
-#optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
-optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
+optimizer = optim.Adam(net.parameters(), lr=LEARN_RATE)
+#optimizer = optim.SGD(net.parameters(), lr=LEARN_RATE, momentum=MOMENTUM)
 
 # Choose learning rate scheduler
 # miles: ReduceLROnPlateau works great dynamically, StepLR good for exploring ruggedness
 #        of loss topology
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, factor=0.1)
+#scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, factor=0.1)
 #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.1)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS)
 
 # Zero the gradients
 optimizer.zero_grad()
@@ -808,7 +864,7 @@ if trainNet:
   
         # Produce training loss curve figure PNG
         plot_loss(counter, [train_loss_hist, valid_loss_hist], ["Training loss", "Validation Loss"], title="Contrastive Loss",
-                  xaxis="Batches", filename=f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_train_{epoch+1}.png")
+                  xaxis="Batches", filename=f"{OUTPUT_DIRECTORY}/{PARAMETER_FILEBASE}_train_{epoch+1}.png")
 
         # Test model on test set
         net.eval()
@@ -857,7 +913,7 @@ if trainNet:
             plot_loss(epoch_hist, [avg_test_loss_hist],
                       ["Testing loss"],
                       title="Average Contrastive Loss", xaxis="Epochs",
-                      filename=f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_epoch_{epoch+1}.png")
+                      filename=f"{OUTPUT_DIRECTORY}/{PARAMETER_FILEBASE}_epoch_{epoch+1}.png")
 
         # Early stopping according to user-defined threshold
         if avg_test_loss < EARLY_THRESHOLD:
@@ -870,7 +926,8 @@ torch.save(net.state_dict(), PARAMETER_FILENAME)
 test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
                                                    pos_ppis=test_pos_ppis,
                                                    neg_ppis=[],
-                                                   transform=True)
+                                                   transform=True,
+                                                   augment=False)
 subset_indices = torch.randperm(len(test_pos_elution_pair_dataset))[:SUBSET_SIZE]
 subset_test_pos_elution_pair_dataset = Subset(test_pos_elution_pair_dataset, subset_indices)
 
@@ -937,7 +994,8 @@ pos_scores_df = pd.DataFrame(pos_ppi_scores_list)
 test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=elut_list,
                                                    pos_ppis=[],
                                                    neg_ppis=test_neg_ppis,
-                                                   transform=True)
+                                                   transform=True,
+                                                   augment=False)
 subset_indices = torch.randperm(len(test_neg_elution_pair_dataset))[:SUBSET_SIZE]
 subset_test_neg_elution_pair_dataset = Subset(test_neg_elution_pair_dataset, subset_indices)
 
@@ -1014,7 +1072,7 @@ pylab.annotate(f"{mean_pos}", (0.0, mean_pos))
 pylab.title("PDFs of Euclidean distances after model transform")
 pylab.legend()
 pylab.grid()
-pylab.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_EUCLIDEAN.png")
+pylab.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILEBASE}_pos_neg_pairs_EUCLIDEAN.png")
 pylab.clf()
 pylab.cla()
 
@@ -1026,7 +1084,7 @@ sns.histplot(pos_scores_df[['euclidean']].values, alpha=0.5, bins=25,
 plt.title("Euclidean distance counts")
 plt.legend()
 plt.grid()
-plt.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_fig_hist_EUCLIDEAN.png")
+plt.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILEBASE}_fig_hist_EUCLIDEAN.png")
 pylab.clf()
 pylab.cla()
 
@@ -1040,7 +1098,7 @@ plt.plot(x,y2,label="pearson_positive_pairs")
 plt.title("PDFs of Pearson scores")
 plt.legend()
 plt.grid()
-plt.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_PEARSON.png")
+plt.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILEBASE}_pos_neg_pairs_PEARSON.png")
 plt.clf()
 plt.cla()
 
@@ -1052,21 +1110,21 @@ sns.histplot(pos_scores_df[['pearson']].values, alpha=0.5, bins=50,
 plt.title("Pearson score counts")
 plt.legend()
 plt.grid()
-plt.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_fig_hist_PEARSON.png")
+plt.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILEBASE}_fig_hist_PEARSON.png")
 pylab.clf()
 pylab.cla()
 
 # Plot the euclidean distance against the Pearson score
 scores_df = pd.DataFrame(pos_ppi_scores_list + neg_ppi_scores_list)
 
-scores_df.to_csv(f"{PARAMETER_FILENAME.split(".")[0]}_test_scores.csv")
+scores_df.to_csv(f"{PARAMETER_FILEBASE}_test_scores.csv")
 # Plot the pearson scores for positive PPIs against the euclidean score
 #   Euclidean distance should be small, preferably as close to 0 as possible
 scat1 = sns.scatterplot(data=scores_df, x="euclidean", y="pearson",
                         hue="label", s=10)
 scat1.set_xlim(-1, 12)
 fig_scat1 = scat1.get_figure()
-fig_scat1.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_scatter.png")
+fig_scat1.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILEBASE}_pearson_vs_euc_scatter.png")
 fig_scat1.clf()
 
 # Plot a contour graph of the positive PPIs
@@ -1075,7 +1133,7 @@ kde1 = sns.kdeplot(data=scores_df, x="euclidean", y="pearson",
                    common_norm=False, hue="label", levels=15)
 kde1.set_xlim(-1, 12)
 fig_kde1 = kde1.get_figure()
-fig_kde1.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pearson_vs_euc_kde.png")
+fig_kde1.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILEBASE}_pearson_vs_euc_kde.png")
 fig_kde1.clf()
 
 # Get labels, confidences, Euclidean distances, Pearson coefficients of test points
@@ -1133,7 +1191,7 @@ plt.title("PR Curve")
 plt.xlabel("Recall")
 plt.ylabel("Precision")
 plt.legend(["Euclidean PR", "Pearson PR"])
-plt.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_pr_curve.png")
+plt.savefig(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILEBASE}_pr_curve.png")
 plt.clf()
 plt.cla()
 
@@ -1141,7 +1199,7 @@ plt.cla()
 aupr_euclidean = get_aupr(precision_euclidean, recall_euclidean)
 aupr_pearson = get_aupr(precision_pearson, recall_pearson)
 # Print metrics to txt file
-with open(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILENAME.split(".")[0]}_results-final.log", 'w') as outFile:
+with open(f"{OUTPUT_DIRECTORY}/{PARAMETER_FILEBASE}_results-final.log", 'w') as outFile:
     outFile.write(f"Minimum Average Validation Loss: {min_avg_valid_loss:.4f}\n")
     outFile.write(f"Minimum Average Test Loss: {min_avg_test_loss:.4f}\n")
     outFile.write(f"Difference Between ED Means of Pos/Neg PPIs: {diff_means_pos_neg_pdf:.4f}\n")
@@ -1161,7 +1219,8 @@ for k, elut in enumerate(elut_list):
     test_pos_elution_pair_dataset = elutionPairDataset(elutdf_list=[elut],
                                                        pos_ppis=test_pos_ppis,
                                                        neg_ppis=[],
-                                                       transform=True)
+                                                       transform=True,
+                                                       augment=False)
 
     subset_indices = torch.randperm(len(test_pos_elution_pair_dataset))[:SUBSET_SIZE]
     subset_test_pos_elution_pair_dataset = Subset(test_pos_elution_pair_dataset, subset_indices)
@@ -1227,7 +1286,8 @@ for k, elut in enumerate(elut_list):
     test_neg_elution_pair_dataset = elutionPairDataset(elutdf_list=[elut],
                                                        pos_ppis=[],
                                                        neg_ppis=test_neg_ppis,
-                                                       transform=True)
+                                                       transform=True,
+                                                       augment=False)
     subset_indices = torch.randperm(len(test_neg_elution_pair_dataset))[:SUBSET_SIZE]
     subset_test_neg_elution_pair_dataset = Subset(test_neg_elution_pair_dataset, subset_indices)
 
@@ -1299,7 +1359,7 @@ for k, elut in enumerate(elut_list):
     pylab.title("PDFs of Euclidean distances after model transform")
     pylab.legend()
     pylab.grid()
-    pylab.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_EUCLIDEAN_{elut_data_filename}.png")
+    pylab.savefig(f"{curr_figs_directory}/{PARAMETER_FILEBASE}_pos_neg_pairs_EUCLIDEAN_{elut_data_filename}.png")
     pylab.clf()
     pylab.cla()
 
@@ -1311,7 +1371,7 @@ for k, elut in enumerate(elut_list):
     plt.title("Euclidean distance counts")
     plt.legend()
     plt.grid()
-    plt.savefig(f"{curr_figs_directory}/f{PARAMETER_FILENAME.split(".")[0]}_ig_hist_EUCLIDEAN_{elut_data_filename}.png")
+    plt.savefig(f"{curr_figs_directory}/f{PARAMETER_FILEBASE}_fig_hist_EUCLIDEAN_{elut_data_filename}.png")
     pylab.clf()
     pylab.cla()
 
@@ -1324,7 +1384,7 @@ for k, elut in enumerate(elut_list):
     plt.title("PDFs of Pearson scores")
     plt.legend()
     plt.grid()
-    plt.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_pos_neg_pairs_PEARSON_{elut_data_filename}.png")
+    plt.savefig(f"{curr_figs_directory}/{PARAMETER_FILEBASE}_pos_neg_pairs_PEARSON_{elut_data_filename}.png")
     plt.clf()
     plt.cla()
 
@@ -1336,15 +1396,12 @@ for k, elut in enumerate(elut_list):
     plt.title(f"Pearson score counts")
     plt.legend()
     plt.grid()
-    plt.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_fig_hist_PEARSON_{elut_data_filename}.png")
+    plt.savefig(f"{curr_figs_directory}/{PARAMETER_FILEBASE}_fig_hist_PEARSON_{elut_data_filename}.png")
     pylab.clf()
     pylab.cla()
 
     # Plot the euclidean distance against the Pearson score
     scores_df = pd.DataFrame(pos_ppi_scores_list + neg_ppi_scores_list)
-
-    #scores_df.to_csv(f"{PARAMETER_FILENAME.split(".")[0]}_test_scores.csv")
-
 
     # Plot the pearson scores for positive PPIs against the euclidean score
     #   Euclidean distance should be small, preferably as close to 0 as possible
@@ -1352,7 +1409,7 @@ for k, elut in enumerate(elut_list):
                             hue="label", s=10)
     scat1.set_xlim(-1, 12)
     fig_scat1 = scat1.get_figure()
-    fig_scat1.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_pos_scatter_{elut_data_filename}.png")
+    fig_scat1.savefig(f"{curr_figs_directory}/{PARAMETER_FILEBASE}_pearson_ed_pos_scatter_{elut_data_filename}.png")
     fig_scat1.clf()
 
     # Plot a contour graph of the positive PPIs
@@ -1361,7 +1418,7 @@ for k, elut in enumerate(elut_list):
                        common_norm=False, hue='label', levels=15)
     kde1.set_xlim(-1, 12)
     fig_kde1 = kde1.get_figure()
-    fig_kde1.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_pearson_ed_contour_{elut_data_filename}.png")
+    fig_kde1.savefig(f"{curr_figs_directory}/{PARAMETER_FILEBASE}_pearson_ed_contour_{elut_data_filename}.png")
     fig_kde1.clf()
 
     # Get labels, confidences, Euclidean distances, Pearson coefficients of test points
@@ -1419,7 +1476,7 @@ for k, elut in enumerate(elut_list):
     plt.title("PR Curve")
     plt.xlabel("Recall")
     plt.ylabel("Precision")
-    plt.savefig(f"{curr_figs_directory}/{PARAMETER_FILENAME.split(".")[0]}_pr_curve_{elut_data_filename}.png")
+    plt.savefig(f"{curr_figs_directory}/{PARAMETER_FILEBASE}_pr_curve_{elut_data_filename}.png")
     plt.legend(["Euclidean PR", "Pearson PR"])
     plt.clf()
     plt.cla()
